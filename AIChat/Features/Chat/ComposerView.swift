@@ -59,6 +59,10 @@ struct ComposerView: View {
             HStack(spacing: 8) {
                 if let dictation {
                     DictationStatus(state: dictation.state, level: dictation.level)
+                        // Статус в одной строке с кнопками — растёт вместе с ними, не больше.
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 }
                 Spacer(minLength: 0)
                 Group {
