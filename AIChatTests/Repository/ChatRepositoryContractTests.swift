@@ -285,7 +285,7 @@ struct ChatRepositoryContractTests {
 
     // MARK: Повтор
 
-    @Test(arguments: RepositoryKind.allCases, [MessageStatus.failed, .interrupted, .cancelled])
+    @Test(arguments: RepositoryKind.allCases, [MessageStatus.failed, .interrupted, .cancelled, .done])
     func claimRetryResetsReplyOnlyOnce(kind: RepositoryKind, status: MessageStatus) async throws {
         let repository = kind.make()
         let (chat, _) = try await seedChat(repository)
@@ -302,7 +302,7 @@ struct ChatRepositoryContractTests {
         #expect(stored?.failure == nil)
     }
 
-    @Test(arguments: RepositoryKind.allCases, [MessageStatus.done, .streaming])
+    @Test(arguments: RepositoryKind.allCases, [MessageStatus.streaming])
     func claimRetryRejectsNonRetryableReply(kind: RepositoryKind, status: MessageStatus) async throws {
         let repository = kind.make()
         let (chat, _) = try await seedChat(repository)

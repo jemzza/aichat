@@ -105,7 +105,9 @@ private struct AssistantMessage: View {
         case .streaming:
             GeneratingIndicator()
         case .done:
-            ActionIcons(message: message, actions: actions, showsRetry: false)
+            // Перегенерация — только у последнего ответа чата (`ChatViewModel.canRetry`).
+            ActionIcons(message: message, actions: actions, showsRetry: actions.canRetry,
+                        retryTitle: "Regenerate")
         case .cancelled:
             // При крупном шрифте подпись и иконки не помещаются в строку — переносим.
             ViewThatFits(in: .horizontal) {
@@ -167,6 +169,7 @@ private struct ActionIcons: View {
     let message: Message
     let actions: MessageActions
     let showsRetry: Bool
+    var retryTitle: LocalizedStringKey = "Retry"
     /// Первый в строке — сдвигаем, чтобы иконка стояла вровень с текстом ответа.
     var alignsToTextEdge = true
 
@@ -182,7 +185,7 @@ private struct ActionIcons: View {
                 .sensoryFeedback(.success, trigger: actions.isCopied) { _, isCopied in isCopied }
             }
             if showsRetry {
-                IconButton(title: "Retry", systemImage: "arrow.clockwise", action: actions.retry)
+                IconButton(title: retryTitle, systemImage: "arrow.clockwise", action: actions.retry)
                     .disabled(!actions.canRetry)
             }
         }

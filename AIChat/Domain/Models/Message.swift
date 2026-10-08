@@ -18,11 +18,12 @@ enum MessageStatus: String, Hashable, Sendable {
     case failed
     case interrupted
 
-    /// Ответ ассистента в этом статусе можно перезапросить.
+    /// Ответ ассистента в этом статусе можно перезапросить (`done` — перегенерация).
+    /// Только `streaming` нельзя: так второй «Retry» во время генерации ничего не делает.
     var isRetryable: Bool {
         switch self {
-        case .failed, .interrupted, .cancelled: true
-        case .pending, .sent, .streaming, .done: false
+        case .failed, .interrupted, .cancelled, .done: true
+        case .pending, .sent, .streaming: false
         }
     }
 }

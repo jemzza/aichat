@@ -134,9 +134,12 @@ final class ChatViewModel {
     // MARK: Действия с ответом
 
     /// «Retry» доступен у ответа `failed`/`interrupted`/`cancelled`, пока в чате ничего не генерируется.
+    /// Перегенерация `done` — только у последнего сообщения чата: иначе следующие вопросы
+    /// и ответы опирались бы на текст, которого уже нет.
     /// Ожидание `retry-after` при 429 проверяет View (обратный отсчёт).
     func canRetry(_ message: Message) -> Bool {
-        message.role == .assistant && message.status.isRetryable && !isGenerating
+        guard message.role == .assistant, message.status.isRetryable, !isGenerating else { return false }
+        return message.status != .done || messages.last?.id == message.id
     }
 
     func retry(_ message: Message) async {

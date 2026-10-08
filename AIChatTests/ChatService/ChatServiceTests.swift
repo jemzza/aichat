@@ -172,6 +172,25 @@ struct ChatServiceTests {
         #expect(harness.provider.requests.count == 2)
     }
 
+    /// Перегенерация: тот же ответ получает новый текст, старый текст в контекст не идёт.
+    @Test func regenerateReplacesDoneReplyInPlace() async throws {
+        let harness = try makeHarness(script: .reply("First answer", tokenDelay: .zero))
+        let chatId = try await harness.service.send("Question", inChat: nil)
+        let done = try await messages(harness, chatId: chatId) { $0.last?.status == .done }
+        let replyId = try #require(done.last?.id)
+        try await waitUntil { !harness.service.isGenerating(chatId: chatId) }
+        harness.provider.setScript(.reply("Second answer", tokenDelay: .zero))
+
+        try await harness.service.retry(assistantMessageId: replyId, inChat: chatId)
+
+        let messages = try await messages(harness, chatId: chatId) {
+            $0.last?.status == .done && $0.last?.text == "Second answer"
+        }
+        #expect(messages.count == 2)
+        #expect(messages.last?.id == replyId)
+        #expect(harness.provider.requests.last == [LLMMessage(role: .user, content: "Question")])
+    }
+
     // MARK: Outbox
 
     @Test func outboxSendsPendingOnceInOrderWhenOnline() async throws {

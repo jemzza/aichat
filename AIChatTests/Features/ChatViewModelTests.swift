@@ -226,12 +226,13 @@ struct ChatViewModelTests {
         try await waitUntil { viewModel.messages.count == 3 }
 
         #expect(viewModel.canRetry(failed))
-        #expect(!viewModel.canRetry(done))
+        // `done` — последний ответ в чате: его можно перегенерировать.
+        #expect(viewModel.canRetry(done))
         #expect(!viewModel.canRetry(user))
 
-        await viewModel.retry(done)
         await viewModel.retry(failed)
-        #expect(session.retriedMessageIds == [failed.id])
+        await viewModel.retry(done)
+        #expect(session.retriedMessageIds == [failed.id, done.id])
 
         // Пока в чате идёт генерация, повторять нельзя.
         let streaming = Message(chatId: chat.id, role: .assistant, text: "", status: .streaming,
@@ -301,6 +302,30 @@ struct ChatViewModelTests {
         #expect(viewModel.chatId == createdId)
         // Подписка на созданный чат ещё не отдала сообщения — приветствие не мигает.
         #expect(!viewModel.showsEmptyState)
+    }
+
+    /// Перегенерировать можно только последний ответ: на старые опираются следующие сообщения.
+    @Test func regenerateOnlyTheLatestReply() async throws {
+        let question = Message(chatId: chat.id, role: .user, text: "Q1", status: .sent, createdAt: .now)
+        let oldAnswer = Message(chatId: chat.id, role: .assistant, text: "A1", status: .done,
+                                createdAt: .now.addingTimeInterval(1))
+        let followUp = Message(chatId: chat.id, role: .user, text: "Q2", status: .sent,
+                               createdAt: .now.addingTimeInterval(2))
+        let latest = Message(chatId: chat.id, role: .assistant, text: "A2", status: .done,
+                             createdAt: .now.addingTimeInterval(3))
+        let repository = InMemoryChatRepository(chats: [chat], messages: [question, oldAnswer, followUp, latest])
+        let session = ManualChatSession()
+        let viewModel = ChatViewModel(chatId: chat.id, repository: repository, session: session)
+        let messagesTask = Task { await viewModel.observeMessages() }
+        defer { messagesTask.cancel() }
+        try await waitUntil { viewModel.messages.count == 4 }
+
+        #expect(!viewModel.canRetry(oldAnswer))
+        #expect(viewModel.canRetry(latest))
+
+        await viewModel.retry(oldAnswer)
+        await viewModel.retry(latest)
+        #expect(session.retriedMessageIds == [latest.id])
     }
 }
 
