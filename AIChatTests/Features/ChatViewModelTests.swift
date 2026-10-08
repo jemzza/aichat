@@ -26,10 +26,12 @@ private final class ManualChatSession: ChatSession {
 
     var sendResult: Result<UUID, Error> = .success(UUID())
     private(set) var sent: [(text: String, chatId: UUID?)] = []
+    private(set) var sentImages: [[ImageAttachment]] = []
     private(set) var stoppedChatIds: [UUID] = []
 
-    func send(_ text: String, inChat chatId: UUID?) async throws -> UUID {
+    func send(_ text: String, images: [ImageAttachment], inChat chatId: UUID?) async throws -> UUID {
         sent.append((text, chatId))
+        sentImages.append(images)
         return try sendResult.get()
     }
 
@@ -152,6 +154,58 @@ struct ChatViewModelTests {
 
         viewModel.inputText = "  \n "
         #expect(!viewModel.canSend)
+    }
+
+    // MARK: Фото
+
+    @Test func attachedPhotosAreSentAndCleared() async {
+        let session = ManualChatSession()
+        let viewModel = ChatViewModel(chatId: chat.id, repository: InMemoryChatRepository(chats: [chat]),
+                                      session: session, prepareImage: { Data($0.reversed()) })
+        #expect(viewModel.supportsImages)
+        #expect(!viewModel.canSend)
+
+        await viewModel.attachImages([Data([1, 2]), nil])
+        #expect(viewModel.attachments.map(\.jpegData) == [Data([2, 1])])
+        #expect(viewModel.attachmentFailed)
+        // Только фото, без текста — уже можно отправить.
+        #expect(viewModel.canSend)
+
+        await viewModel.send()
+        #expect(session.sent.map(\.text) == [""])
+        #expect(session.sentImages.map { $0.map(\.jpegData) } == [[Data([2, 1])]])
+        #expect(viewModel.attachments.isEmpty)
+    }
+
+    @Test func photosAreLimitedPerMessageAndRemovable() async {
+        let viewModel = ChatViewModel(chatId: nil, repository: InMemoryChatRepository(), session: ManualChatSession(),
+                                      prepareImage: { $0 })
+        await viewModel.attachImages((0..<5).map { Data([UInt8($0)]) })
+        #expect(viewModel.attachments.count == ImageAttachment.maxPerMessage)
+        #expect(viewModel.remainingAttachmentSlots == 0)
+        #expect(!viewModel.canAttachImages)
+
+        viewModel.removeAttachment(id: viewModel.attachments[0].id)
+        #expect(viewModel.attachments.map(\.jpegData) == [Data([1]), Data([2])])
+        #expect(viewModel.canAttachImages)
+    }
+
+    @Test func withoutPreparerThereIsNoPhotoButton() async {
+        let viewModel = ChatViewModel(chatId: nil, repository: InMemoryChatRepository(), session: ManualChatSession())
+        #expect(!viewModel.supportsImages)
+        await viewModel.attachImages([Data([1])])
+        #expect(viewModel.attachments.isEmpty)
+    }
+
+    @Test func failedSendRestoresPhotos() async {
+        let session = ManualChatSession()
+        session.sendResult = .failure(SendFailed())
+        let viewModel = ChatViewModel(chatId: chat.id, repository: InMemoryChatRepository(chats: [chat]),
+                                      session: session, prepareImage: { $0 })
+        await viewModel.attachImages([Data([7])])
+        await viewModel.send()
+        #expect(viewModel.sendFailed)
+        #expect(viewModel.attachments.map(\.jpegData) == [Data([7])])
     }
 
     @Test func sendFromNewChatAdoptsCreatedChat() async {

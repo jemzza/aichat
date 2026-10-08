@@ -286,6 +286,41 @@ struct ChatServiceTests {
         #expect(onDevice.requests.count == 1)
     }
 
+    // MARK: Фото
+
+    @Test func photosGoToProviderWithTheQuestion() async throws {
+        let harness = try makeHarness()
+        let photo = ImageAttachment(jpegData: Data([9]))
+
+        let chatId = try await harness.service.send("What is it?", images: [photo], inChat: nil)
+
+        let messages = try await messages(harness, chatId: chatId) { $0.last?.status == .done }
+        #expect(messages.first?.images == [photo])
+        #expect(harness.provider.requests == [[LLMMessage(role: .user, content: "What is it?", images: [Data([9])])]])
+    }
+
+    @Test func onlyNewestPhotosStayInContext() {
+        let old = LLMMessage(role: .user, content: "a", images: [Data([1]), Data([2])])
+        let answer = LLMMessage(role: .assistant, content: "b")
+        let new = LLMMessage(role: .user, content: "c", images: [Data([3]), Data([4])])
+
+        let kept = ChatService<ManualClock>.keepingNewestImages([old, answer, new], limit: 3)
+
+        #expect(kept.map(\.images) == [[Data([2])], [], [Data([3]), Data([4])]])
+        #expect(kept.map(\.content) == ["a", "b", "c"])
+    }
+
+    @Test func photoMessageIsNotAnsweredOffline() async throws {
+        let (harness, onDevice, service) = try makeOnDeviceHarness()
+        let chatId = try await service.send("", images: [ImageAttachment(jpegData: Data([1]))], inChat: nil)
+        let pending = try await messages(harness, chatId: chatId) { !$0.isEmpty }
+
+        try await service.answerOffline(messageId: try #require(pending.first).id, inChat: chatId)
+
+        #expect(try await messages(harness, chatId: chatId) { !$0.isEmpty }.map(\.status) == [.pending])
+        #expect(onDevice.requests.isEmpty)
+    }
+
     // MARK: Удаление и прерывание
 
     @Test func deletingChatCancelsGeneration() async throws {

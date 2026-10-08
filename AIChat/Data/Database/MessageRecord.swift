@@ -49,8 +49,9 @@ extension MessageRecord {
         createdAt = message.createdAt
     }
 
+    /// - Parameter images: фото сообщения (таблица `attachment`).
     /// - Throws: `InvalidDatabaseValue`, если в базе неизвестные роль, статус или вид ошибки.
-    func message() throws -> Message {
+    func message(images: [ImageAttachment] = []) throws -> Message {
         guard let role = MessageRole(rawValue: role) else {
             throw InvalidDatabaseValue(column: "role", value: role)
         }
@@ -65,7 +66,13 @@ extension MessageRecord {
             failure = MessageFailure(kind: kind, retryAt: failureRetryAt)
         }
         return Message(id: id, chatId: chatId, role: role, text: text, status: status,
-                       failure: failure, createdAt: createdAt)
+                       failure: failure, images: images, createdAt: createdAt)
+    }
+
+    /// Доменные сообщения вместе с их фото — одним дополнительным запросом.
+    static func messages(_ records: [MessageRecord], _ db: Database) throws -> [Message] {
+        let images = try AttachmentRecord.imagesByMessage(records.map(\.id), db)
+        return try records.map { try $0.message(images: images[$0.id] ?? []) }
     }
 
     /// Порядок сообщений: по времени, при равенстве — по порядку вставки.

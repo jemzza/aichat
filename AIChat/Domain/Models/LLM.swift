@@ -9,6 +9,14 @@ enum LLMRole: String, Hashable, Sendable {
 struct LLMMessage: Hashable, Sendable {
     let role: LLMRole
     let content: String
+    /// JPEG-фото к сообщению пользователя (vision-запрос).
+    let images: [Data]
+
+    init(role: LLMRole, content: String, images: [Data] = []) {
+        self.role = role
+        self.content = content
+        self.images = images
+    }
 }
 
 /// Ошибка, которую бросает `LLMProvider`. Отмена — не ошибка (см. `LLMProvider.streamReply`).

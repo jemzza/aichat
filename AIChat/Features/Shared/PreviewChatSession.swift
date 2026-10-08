@@ -54,12 +54,12 @@ final class PreviewChatSession: ChatSession {
         return stream
     }
 
-    func send(_ text: String, inChat chatId: UUID?) async throws -> UUID {
+    func send(_ text: String, images: [ImageAttachment], inChat chatId: UUID?) async throws -> UUID {
         let date = now()
         let isOnline = connectivity.isOnline
         let chatId = chatId ?? UUID()
         let message = Message(chatId: chatId, role: .user, text: text,
-                              status: isOnline ? .sent : .pending, createdAt: date)
+                              status: isOnline ? .sent : .pending, images: images, createdAt: date)
         if try await chatExists(chatId) {
             try await repository.insertMessage(message)
         } else {
@@ -175,6 +175,7 @@ extension ChatDependencies {
             connectivity: connectivity,
             speech: FakeSpeechSynthesizer(),
             transcriber: FakeSpeechTranscriber(),
+            prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: "Groq · gpt-oss-120b"
         )
     }

@@ -2,6 +2,10 @@ import Testing
 @testable import AIChat
 
 struct ChatTitleTests {
+    @Test func photoWithoutTextGetsPhotoTitle() {
+        #expect(ChatTitle.make(from: " \n ") == "Photo")
+    }
+
     @Test func shortTextIsKeptAsIs() {
         #expect(ChatTitle.make(from: "Plan a weekend in Lisbon") == "Plan a weekend in Lisbon")
     }

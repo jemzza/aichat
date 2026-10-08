@@ -30,10 +30,10 @@ final class GRDBChatRepository: ChatRepository {
 
     func observeMessages(chatId: UUID) -> AsyncStream<[Message]> {
         observe { db in
-            try MessageRecord.chronological()
+            let records = try MessageRecord.chronological()
                 .filter(MessageRecord.Columns.chatId == chatId)
                 .fetchAll(db)
-                .map { try $0.message() }
+            return try MessageRecord.messages(records, db)
         }
     }
 
@@ -63,7 +63,7 @@ final class GRDBChatRepository: ChatRepository {
         record.updatedAt = firstMessage.createdAt
         try await writer.write { [record] db in
             try record.insert(db)
-            try MessageRecord(firstMessage).insert(db)
+            try Self.insert(firstMessage, db)
         }
     }
 
@@ -114,7 +114,9 @@ final class GRDBChatRepository: ChatRepository {
             }
             // Фильтр — в Swift, чтобы правило контекста жило в одном месте (`Message.isLLMContext`).
             let context = try ordered[..<index].map { try $0.message() }.filter(\.isLLMContext)
-            return Array(context.suffix(max(limit, 0)))
+            let kept = Set(context.suffix(max(limit, 0)).map(\.id))
+            // Фото читаем только для сообщений, которые попадут в запрос.
+            return try MessageRecord.messages(ordered[..<index].filter { kept.contains($0.id) }, db)
         }
     }
 
@@ -122,11 +124,11 @@ final class GRDBChatRepository: ChatRepository {
 
     func pendingMessages() async throws -> [Message] {
         try await writer.read { db in
-            try MessageRecord.chronological()
+            let records = try MessageRecord.chronological()
                 .filter(MessageRecord.Columns.role == MessageRole.user.rawValue)
                 .filter(MessageRecord.Columns.status == MessageStatus.pending.rawValue)
                 .fetchAll(db)
-                .map { try $0.message() }
+            return try MessageRecord.messages(records, db)
         }
     }
 
@@ -174,10 +176,18 @@ final class GRDBChatRepository: ChatRepository {
 
     /// Вставляет сообщение и сдвигает `updatedAt` чата вперёд (назад — никогда).
     private static func append(_ message: Message, _ db: Database) throws {
-        try MessageRecord(message).insert(db)
+        try insert(message, db)
         try db.execute(
             sql: "UPDATE chat SET updatedAt = MAX(updatedAt, ?) WHERE id = ?",
             arguments: [message.createdAt.databaseTimestamp, message.chatId]
         )
+    }
+
+    /// Сообщение и его фото.
+    private static func insert(_ message: Message, _ db: Database) throws {
+        try MessageRecord(message).insert(db)
+        for attachment in AttachmentRecord.records(for: message) {
+            try attachment.insert(db)
+        }
     }
 }

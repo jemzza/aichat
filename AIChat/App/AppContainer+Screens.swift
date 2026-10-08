@@ -91,6 +91,7 @@ extension AppContainer {
             connectivity: connectivity,
             speech: SystemSpeechSynthesizer(),
             transcriber: makeTranscriber(plan.dictation, connectivity: connectivity),
+            prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: provider.displayName
         )
         return (dependencies, service)

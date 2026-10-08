@@ -75,6 +75,7 @@ struct ChatView: View {
                 isGenerating: viewModel.isGenerating,
                 canSend: viewModel.canSend,
                 dictation: composerDictation,
+                attachments: composerAttachments,
                 onSend: send,
                 onStop: { viewModel.stop() }
             )
@@ -94,11 +95,20 @@ struct ChatView: View {
         } message: {
             Text("Please try again.")
         }
+        .alert("Couldn't attach the photo", isPresented: attachmentFailedBinding) {
+            Button("OK", role: .cancel) { viewModel.dismissAttachmentFailure() }
+        } message: {
+            Text("Choose a different photo.")
+        }
         .alert("Couldn't answer offline", isPresented: offlineAnswerFailedBinding) {
             Button("OK", role: .cancel) { viewModel.dismissOfflineAnswerFailure() }
         } message: {
             Text("Please try again.")
         }
+    }
+
+    private var attachmentFailedBinding: Binding<Bool> {
+        Binding { viewModel.attachmentFailed } set: { if !$0 { viewModel.dismissAttachmentFailure() } }
     }
 
     private var offlineAnswerFailedBinding: Binding<Bool> {
@@ -133,6 +143,17 @@ struct ChatView: View {
             toggle: { Task { await viewModel.toggleDictation() } },
             openSettings: { dictation.openSettings() },
             dismissMessage: { dictation.dismissMessage() }
+        )
+    }
+
+    private var composerAttachments: ComposerAttachments? {
+        guard viewModel.supportsImages else { return nil }
+        return ComposerAttachments(
+            images: viewModel.attachments,
+            remainingSlots: viewModel.remainingAttachmentSlots,
+            isPreparing: viewModel.isPreparingImages,
+            add: { originals in Task { await viewModel.attachImages(originals) } },
+            remove: { viewModel.removeAttachment(id: $0) }
         )
     }
 
@@ -176,7 +197,8 @@ private struct ChatViewPreview: View {
                                                        repository: dependencies.repository,
                                                        session: dependencies.session,
                                                        speech: dependencies.speech,
-                                                       transcriber: dependencies.transcriber))
+                                                       transcriber: dependencies.transcriber,
+                                                       prepareImage: dependencies.prepareImage))
     }
 
     var body: some View {

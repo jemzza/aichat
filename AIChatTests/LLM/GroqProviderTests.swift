@@ -40,7 +40,7 @@ struct GroqProviderTests {
         #expect(body.includeReasoning == false)
         #expect(body.maxCompletionTokens == 1024)
         #expect(body.messages.map(\.role) == ["system", "user", "assistant", "user"])
-        #expect(body.messages.first?.content == GroqProvider.systemPrompt)
+        #expect(body.messages.first?.content == .text(GroqProvider.systemPrompt))
         #expect(body.messages.dropFirst().map(\.content) == ["Hi", "Hello!", "How are you?"])
     }
 
@@ -55,6 +55,33 @@ struct GroqProviderTests {
         let messages = [LLMMessage(role: .system, content: "Custom"), LLMMessage(role: .user, content: "Hi")]
         let body = try body(of: GroqProvider.makeRequest(messages: messages, configuration: configuration))
         #expect(body.messages.map(\.content) == ["Custom", "Hi"])
+    }
+
+    @Test func imagesSwitchToVisionModelWithContentParts() throws {
+        let photo = Data([0xFF, 0xD8, 0xFF])
+        let messages = [
+            LLMMessage(role: .user, content: "Hi"),
+            LLMMessage(role: .assistant, content: "Hello!"),
+            LLMMessage(role: .user, content: "What is this?", images: [photo]),
+            LLMMessage(role: .user, content: "", images: [photo]),
+        ]
+        let request = try GroqProvider.makeRequest(messages: messages, configuration: configuration)
+        let body = try body(of: request)
+
+        #expect(body.model == GroqConfiguration.defaultVisionModel)
+        #expect(body.reasoningEffort == "none")
+        #expect(body.includeReasoning == nil)
+        #expect(body.messages.dropFirst().prefix(2).map(\.content) == ["Hi", "Hello!"])
+        let imageURL = "data:image/jpeg;base64,\(photo.base64EncodedString())"
+        #expect(body.messages[3].content == .parts([.text("What is this?"), .jpeg(photo)]))
+        #expect(body.messages[4].content == .parts([.jpeg(photo)]))
+
+        let data = try #require(request.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["include_reasoning"] == nil)
+        let parts = try #require((json["messages"] as? [[String: Any]])?[3]["content"] as? [[String: Any]])
+        #expect(parts.map { $0["type"] as? String } == ["text", "image_url"])
+        #expect((parts[1]["image_url"] as? [String: Any])?["url"] as? String == imageURL)
     }
 
     @Test func displayNameShowsShortModelName() {

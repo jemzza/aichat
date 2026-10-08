@@ -25,6 +25,11 @@ final class ChatViewModel {
             if inputText != dictatedText, dictation?.isActive == true { dictation?.detach() }
         }
     }
+    /// Фото к следующему сообщению — уже уменьшенные, в порядке выбора.
+    private(set) var attachments: [ImageAttachment] = []
+    /// Фото из библиотеки ещё уменьшаются — «Send» подождёт.
+    private(set) var isPreparingImages = false
+    private(set) var attachmentFailed = false
     /// Диктовка в поле ввода; `nil` — кнопки микрофона нет.
     let dictation: DictationViewModel?
     /// Сообщение уходит в базу — защита от двойного нажатия.
@@ -45,6 +50,7 @@ final class ChatViewModel {
     @ObservationIgnored private let onChatCreated: (UUID) -> Void
     @ObservationIgnored private let copyToClipboard: (String) -> Void
     @ObservationIgnored private let speech: (any SpeechSynthesizing)?
+    @ObservationIgnored private let prepareImage: (@Sendable (Data) async -> Data?)?
     /// Текст для озвучки по id ответа: `canReadAloud` спрашивается при каждой отрисовке
     /// ленты (во время стрима — на каждый токен), разбирать Markdown каждый раз незачем.
     /// Последний текст, который вставила диктовка, — чтобы отличить его от правки пользователя.
@@ -58,6 +64,7 @@ final class ChatViewModel {
     ///   чтобы ViewModel не зависела от UIKit.
     /// - Parameter speech: озвучка ответов; `nil` — кнопки «Read aloud» нет.
     /// - Parameter transcriber: диктовка; `nil` — кнопки микрофона нет.
+    /// - Parameter prepareImage: уменьшение фото для вложения; `nil` — кнопки «+» нет.
     /// - Parameter openSettings: открыть настройки приложения (разрешения микрофона).
     init(
         chatId: UUID?,
@@ -67,6 +74,7 @@ final class ChatViewModel {
         copyToClipboard: @escaping (String) -> Void = { _ in },
         speech: (any SpeechSynthesizing)? = nil,
         transcriber: (any SpeechTranscribing)? = nil,
+        prepareImage: (@Sendable (Data) async -> Data?)? = nil,
         openSettings: @escaping () -> Void = {},
         now: @escaping () -> Date = Date.init,
         calendar: Calendar = .current
@@ -77,6 +85,7 @@ final class ChatViewModel {
         self.onChatCreated = onChatCreated
         self.copyToClipboard = copyToClipboard
         self.speech = speech
+        self.prepareImage = prepareImage
         dictation = transcriber.map { DictationViewModel(transcriber: $0, speech: speech, openSettings: openSettings) }
         self.now = now
         self.calendar = calendar
@@ -119,7 +128,8 @@ final class ChatViewModel {
     }
 
     var canSend: Bool {
-        !isSending && !isGenerating && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !isSending, !isGenerating, !isPreparingImages else { return false }
+        return !attachments.isEmpty || !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func send() async {
@@ -127,17 +137,19 @@ final class ChatViewModel {
         if let dictation, dictation.isActive { await dictation.finish() }
         guard canSend else { return }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let images = attachments
         inputText = ""
-        await send(text: text, restoresInput: true)
+        attachments = []
+        await send(text: text, images: images, restoresInput: true)
     }
 
-    private func send(text: String, restoresInput: Bool = false) async {
-        guard !isSending, !isGenerating, !text.isEmpty else { return }
+    private func send(text: String, images: [ImageAttachment] = [], restoresInput: Bool = false) async {
+        guard !isSending, !isGenerating, !text.isEmpty || !images.isEmpty else { return }
         isSending = true
         isPinnedToBottom = true
         defer { isSending = false }
         do {
-            let id = try await session.send(text, inChat: chatId)
+            let id = try await session.send(text, images: images, inChat: chatId)
             if chatId == nil {
                 chatId = id
                 // Подписка на новый чат ещё не вернула сообщения — не мигаем пустым экраном.
@@ -147,6 +159,7 @@ final class ChatViewModel {
         } catch {
             // Ничего не потеряли: возвращаем текст в поле, если пользователь не начал новый.
             if restoresInput, inputText.isEmpty { inputText = text }
+            if restoresInput, attachments.isEmpty { attachments = images }
             sendFailed = true
         }
     }
@@ -158,6 +171,39 @@ final class ChatViewModel {
 
     func dismissSendFailure() {
         sendFailed = false
+    }
+
+    // MARK: Фото
+
+    /// Кнопка «+» есть, только если композиция умеет готовить фото.
+    var supportsImages: Bool { prepareImage != nil }
+
+    /// Сколько фото ещё можно добавить к сообщению.
+    var remainingAttachmentSlots: Int { max(ImageAttachment.maxPerMessage - attachments.count, 0) }
+
+    var canAttachImages: Bool { supportsImages && remainingAttachmentSlots > 0 && !isPreparingImages }
+
+    /// Фото из библиотеки: уменьшаются и добавляются, пока есть место.
+    /// - Parameter originals: `nil` — фото не удалось загрузить из библиотеки.
+    func attachImages(_ originals: [Data?]) async {
+        guard let prepareImage, !originals.isEmpty else { return }
+        isPreparingImages = true
+        defer { isPreparingImages = false }
+        for original in originals where remainingAttachmentSlots > 0 {
+            if let original, let jpeg = await prepareImage(original) {
+                attachments.append(ImageAttachment(jpegData: jpeg))
+            } else {
+                attachmentFailed = true
+            }
+        }
+    }
+
+    func removeAttachment(id: UUID) {
+        attachments.removeAll { $0.id == id }
+    }
+
+    func dismissAttachmentFailure() {
+        attachmentFailed = false
     }
 
     // MARK: Диктовка
@@ -212,8 +258,9 @@ final class ChatViewModel {
     /// «Answer offline» — у первого `pending` в чате: ответ встаёт сразу за ним, а более
     /// поздние вопросы уйдут, когда появится сеть (и получат этот ответ в контексте).
     func canAnswerOffline(_ message: Message) -> Bool {
-        guard message.role == .user, message.status == .pending, !isGenerating, !isAnsweringOffline,
-              session.canAnswerOffline else { return false }
+        // Модель на устройстве фото не видит — на сообщение с фото офлайн не отвечаем.
+        guard message.role == .user, message.status == .pending, message.images.isEmpty, !isGenerating,
+              !isAnsweringOffline, session.canAnswerOffline else { return false }
         return messages.first { $0.status == .pending }?.id == message.id
     }
 

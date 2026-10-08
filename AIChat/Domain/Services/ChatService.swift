@@ -13,6 +13,8 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
         var historyLimit = 20
         /// Обрезка контекста по символам (≈2K токенов) — экономия лимита Groq.
         var contextCharacterLimit = 6000
+        /// Сколько фото (самых свежих) идёт в запрос — лимит vision-модели Groq.
+        var imageLimit = ImageAttachment.maxPerMessage
         /// Как часто писать стримящийся текст в базу.
         var writeInterval: Duration = .milliseconds(500)
     }
@@ -95,12 +97,13 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
         return stream
     }
 
-    func send(_ text: String, inChat chatId: UUID?) async throws -> UUID {
+    func send(_ text: String, images: [ImageAttachment], inChat chatId: UUID?) async throws -> UUID {
         let date = now()
         let chatId = chatId ?? UUID()
         // Всегда сначала `pending`: переход в `sent` вместе с ответом — атомарный
         // `claimPending`, тот же путь, что у outbox, поэтому двойной отправки нет.
-        let message = Message(chatId: chatId, role: .user, text: text, status: .pending, createdAt: date)
+        let message = Message(chatId: chatId, role: .user, text: text, status: .pending,
+                              images: Array(images.prefix(ImageAttachment.maxPerMessage)), createdAt: date)
         if try await chatExists(chatId) {
             try await repository.insertMessage(message)
         } else {
@@ -133,6 +136,8 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
     func answerOffline(messageId: UUID, inChat chatId: UUID) async throws {
         guard canAnswerOffline, let onDeviceProvider, generations[chatId] == nil,
               let message = try await repository.pendingMessages().first(where: { $0.id == messageId }),
+              // Модель на устройстве фото не видит — отвечать на него вслепую незачем.
+              message.images.isEmpty,
               // Пока ждали базу, могла появиться сеть (outbox) или начаться другая генерация.
               canAnswerOffline, generations[chatId] == nil
         else { return }
@@ -270,9 +275,22 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
         let history = try await repository.history(chatId: chatId, before: messageId,
                                                    limit: configuration.historyLimit)
         let messages = history.map { message in
-            LLMMessage(role: message.role == .user ? .user : .assistant, content: message.text)
+            LLMMessage(role: message.role == .user ? .user : .assistant, content: message.text,
+                       images: message.images.map(\.jpegData))
         }
-        return Self.trimmed(messages, characterLimit: configuration.contextCharacterLimit)
+        let trimmed = Self.trimmed(messages, characterLimit: configuration.contextCharacterLimit)
+        return Self.keepingNewestImages(trimmed, limit: configuration.imageLimit)
+    }
+
+    /// Не больше `limit` фото на запрос: у старых сообщений фото убираются первыми, текст остаётся.
+    nonisolated static func keepingNewestImages(_ messages: [LLMMessage], limit: Int) -> [LLMMessage] {
+        var remaining = max(limit, 0)
+        return messages.reversed().map { message in
+            guard !message.images.isEmpty else { return message }
+            let kept = Array(message.images.suffix(remaining))
+            remaining -= kept.count
+            return LLMMessage(role: message.role, content: message.content, images: kept)
+        }.reversed()
     }
 
     /// Последние сообщения, суммарно не длиннее `characterLimit`. Последнее

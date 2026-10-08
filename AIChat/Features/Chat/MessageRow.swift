@@ -36,17 +36,26 @@ private struct UserMessage: View {
     let message: Message
     let actions: MessageActions
 
+    @State private var openedImage: ImageAttachment?
+    @ScaledMetric(relativeTo: .body) private var singleImageSide: CGFloat = 200
+    @ScaledMetric(relativeTo: .body) private var imageSide: CGFloat = 96
+
     var body: some View {
         TrailingFractionLayout(fraction: 0.8) {
             VStack(alignment: .trailing, spacing: 6) {
-                // Текст сообщения — пользовательские данные, а не строка интерфейса.
-                Text(message.text)
-                    .textStyle(.userMessage)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.appSurface, in: .rect(cornerRadius: 20))
+                if !message.images.isEmpty {
+                    images
+                }
+                if !message.text.isEmpty {
+                    // Текст сообщения — пользовательские данные, а не строка интерфейса.
+                    Text(message.text)
+                        .textStyle(.userMessage)
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.appSurface, in: .rect(cornerRadius: 20))
+                }
 
                 if message.status == .pending {
                     Label("Will send when online", systemImage: "clock")
@@ -61,6 +70,21 @@ private struct UserMessage: View {
                             .accessibilityHint(Text("Answers with the model on this device"))
                     }
                 }
+            }
+        }
+        .sheet(item: $openedImage) { ImageViewer(attachment: $0) }
+    }
+
+    /// Одно фото — крупно, несколько — рядом квадратами. Нажатие открывает фото целиком.
+    private var images: some View {
+        let side = message.images.count == 1 ? singleImageSide : imageSide
+        return HStack(spacing: 6) {
+            ForEach(message.images) { image in
+                Button { openedImage = image } label: {
+                    AttachmentThumbnail(attachment: image, side: side, cornerRadius: 16)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(Text("Opens the photo"))
             }
         }
     }
