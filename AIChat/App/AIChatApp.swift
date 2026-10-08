@@ -2,16 +2,27 @@ import SwiftUI
 
 @main
 struct AIChatApp: App {
-    @State private var container = AppContainer(
-        environment: AppContainer.environment(for: .processInfo),
-        launchOptions: LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
-    )
+    @State private var container: AppContainer
+    @State private var screens: ChatDependencies?
+
+    init() {
+        let container = AppContainer(
+            environment: AppContainer.environment(for: .processInfo),
+            launchOptions: LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
+        )
+        _container = State(initialValue: container)
+        _screens = State(initialValue: container.environment == .live ? container.makeChatDependencies() : nil)
+    }
 
     var body: some Scene {
         WindowGroup {
             switch container.environment {
             case .live:
-                PlaceholderView()
+                if let screens {
+                    RootView(dependencies: screens)
+                } else {
+                    PlaceholderView()
+                }
             case .unitTests:
                 EmptyView()
             }
