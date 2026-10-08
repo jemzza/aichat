@@ -159,8 +159,10 @@ _Сюда записываем, что пошло не так и что реши
   удаление) — появился раньше сервиса; для превью и `-mockData` —
   `PreviewChatSession`. При подключении (3.2) `ChatSession` переехал в
   `Domain/Protocols`, `ChatService` — в `Domain/Services`.
-- 4.6: иконка «повторить» есть только у `cancelled`/`failed`/`interrupted`;
-  перегенерировать `done` контракт `claimRetry` не позволяет.
+- 4.6: иконка «повторить» сначала была только у `cancelled`/`failed`/`interrupted`.
+  По решению заказчика добавлена перегенерация: `claimRetry` принимает и `done`
+  (`MessageStatus.isRetryable`), иконка «перегенерировать» справа от «копировать» —
+  только у последнего ответа в чате.
 - 4.7: таблицы markdown не поддерживаются (показываются текстом); инлайн-код
   задаётся моноширинным явно — `.fontDesign(.serif)` перебивает `.code`.
 - 4.8: `ChatDependencies` получил `connectivity`; `-mockOffline` (вместе с
