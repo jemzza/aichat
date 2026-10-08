@@ -75,8 +75,14 @@ NO_PAUSE=1 ./Build.command
   каталог `Localizable.xcstrings`. Документация и план — на русском.
 - API новее iOS 18 (в т.ч. `.glassEffect` и прочий Liquid Glass) — только за
   `#available`; UI проверяй на iOS 18 и iOS 26.
-- Только системные цвета и шрифты (`.primary`, `.secondary`, `Color(.systemBackground)`,
-  Dynamic Type) — светлая и тёмная тема должны работать без отдельного кода.
+- Цвета: системные (`.primary`, `.secondary` и т.п.) **или** цвета из
+  `Assets.xcassets`, если у них есть оба варианта — Light и Dark
+  (`Background`, `Surface`, `Accent`). Захардкоженные RGB в коде запрещены.
+  Шрифты системные (SF Pro; serif/New York через `.fontDesign(.serif)` для
+  ответов ассистента), только Dynamic Type — светлая и тёмная тема должны
+  работать без отдельного кода.
+- UI делаем по разделу «UI-референс» в `docs/task.md`: без логотипа, названия
+  и фирменного цвета Claude; иконки — SF Symbols.
 
 ## Секреты — строго
 
