@@ -55,7 +55,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.aichat.app
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # 6 — Mac Catalyst «Optimize for Mac»: родные размеры и элементы macOS.
+        TARGETED_DEVICE_FAMILY: "1,2,6"
+        SUPPORTS_MACCATALYST: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: Accent
 
@@ -69,6 +71,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.aichat.tests
+        SUPPORTS_MACCATALYST: YES
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
