@@ -64,8 +64,10 @@ struct RootView: View {
                 onRename: { chatList.beginRename($0) },
                 onNewChat: { chatList.startNewChat() }
             )
-            ChatScreenContent(chatId: chatList.selectedChatId, dependencies: dependencies)
-                .id(chatList.selectedChatId)
+            ChatScreenContent(chatId: chatList.selectedChatId, dependencies: dependencies) { id in
+                chatList.didCreateChat(id: id)
+            }
+            .id(chatList.screenID)
                 .frame(maxHeight: .infinity)
         }
         .background(.appBackground)
@@ -76,15 +78,16 @@ struct RootView: View {
     }
 }
 
-/// Тело экрана чата. Пересоздаётся при смене чата (`.id`), чтобы у каждого
-/// чата была своя ViewModel и своя подписка на базу.
+/// Тело экрана чата. Пересоздаётся, когда пользователь выбирает другой чат
+/// (`screenID`), но не когда новый чат получил id после первой отправки.
 private struct ChatScreenContent: View {
     @State private var viewModel: ChatViewModel
 
-    init(chatId: UUID?, dependencies: ChatDependencies) {
+    init(chatId: UUID?, dependencies: ChatDependencies, onChatCreated: @escaping (UUID) -> Void) {
         _viewModel = State(initialValue: ChatViewModel(chatId: chatId,
                                                        repository: dependencies.repository,
-                                                       session: dependencies.session))
+                                                       session: dependencies.session,
+                                                       onChatCreated: onChatCreated))
     }
 
     var body: some View {

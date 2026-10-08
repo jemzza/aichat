@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Лента сообщений. Автоскролл — только если пользователь внизу; иначе
-/// показывается кнопка «вниз».
+/// Лента сообщений и поле ввода. Автоскролл — только если пользователь внизу;
+/// иначе показывается кнопка «вниз».
 struct ChatView: View {
-    let viewModel: ChatViewModel
+    @Bindable var viewModel: ChatViewModel
 
     @State private var position = ScrollPosition(edge: .bottom)
     /// Последнее известное «у нижнего края» — применяется, когда пользователь отпустил ленту.
@@ -42,6 +42,10 @@ struct ChatView: View {
                 position.scrollTo(edge: .bottom)
             }
         }
+        // Клавиатура или выросшее поле ввода уменьшают ленту — остаёмся внизу.
+        .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.height } action: { old, new in
+            if new < old, viewModel.isPinnedToBottom { position.scrollTo(edge: .bottom) }
+        }
         .overlay(alignment: .bottom) {
             if viewModel.showsScrollToBottomButton {
                 ScrollToBottomButton {
@@ -53,9 +57,34 @@ struct ChatView: View {
             }
         }
         .animation(.snappy, value: viewModel.showsScrollToBottomButton)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ComposerView(
+                text: $viewModel.inputText,
+                isGenerating: viewModel.isGenerating,
+                canSend: viewModel.canSend,
+                onSend: send,
+                onStop: { viewModel.stop() }
+            )
+        }
         .background(.appBackground)
-        .task { await viewModel.observeMessages() }
-        .task { await viewModel.observeDraft() }
+        .task(id: viewModel.chatId) { await viewModel.observeMessages() }
+        .task(id: viewModel.chatId) { await viewModel.observeDraft() }
+        .alert("Message not sent", isPresented: sendFailedBinding) {
+            Button("OK", role: .cancel) { viewModel.dismissSendFailure() }
+        } message: {
+            Text("Please try again.")
+        }
+    }
+
+    private func send() {
+        Task {
+            await viewModel.send()
+            position.scrollTo(edge: .bottom)
+        }
+    }
+
+    private var sendFailedBinding: Binding<Bool> {
+        Binding { viewModel.sendFailed } set: { if !$0 { viewModel.dismissSendFailure() } }
     }
 }
 

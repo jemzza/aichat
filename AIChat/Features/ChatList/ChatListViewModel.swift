@@ -47,7 +47,13 @@ final class ChatListViewModel {
     /// Пока не пришло первое значение из базы, пустое состояние не показываем.
     private(set) var hasLoaded = false
     var searchText = ""
-    var selectedChatId: UUID?
+    private(set) var selectedChatId: UUID? {
+        didSet { if !isAdoptingCreatedChat { screenID = UUID() } }
+    }
+    /// Идентичность экрана чата: меняется при выборе другого чата, но не когда
+    /// новый чат получил id после первой отправки — экран не пересоздаётся.
+    private(set) var screenID = UUID()
+    @ObservationIgnored private var isAdoptingCreatedChat = false
 
     /// Чат, который сейчас переименовывают (алерт с полем ввода).
     private(set) var renamingChat: Chat?
@@ -96,21 +102,31 @@ final class ChatListViewModel {
     /// Подписка на базу; живёт, пока жива задача вызывающего (`.task` во View).
     func observe() async {
         for await chats in repository.observeChats() {
+            let wasListed = selectedChatId.map { id in self.chats.contains { $0.id == id } } ?? false
             self.chats = chats
             hasLoaded = true
-            if let selectedChatId, !chats.contains(where: { $0.id == selectedChatId }) {
+            // Сбрасываем выбор, только если чат был в списке и исчез (удалён). Только что
+            // созданный чат может ещё не дойти до списка — его не трогаем.
+            if wasListed, let selectedChatId, !chats.contains(where: { $0.id == selectedChatId }) {
                 self.selectedChatId = nil
             }
         }
     }
 
     func startNewChat() {
-        selectedChatId = nil
+        if selectedChatId != nil { selectedChatId = nil }
         searchText = ""
     }
 
     func select(_ chat: Chat) {
-        selectedChatId = chat.id
+        if selectedChatId != chat.id { selectedChatId = chat.id }
+    }
+
+    /// Новый чат сохранён вместе с первым сообщением — выделяем его в списке.
+    func didCreateChat(id: UUID) {
+        isAdoptingCreatedChat = true
+        selectedChatId = id
+        isAdoptingCreatedChat = false
     }
 
     // MARK: Переименование

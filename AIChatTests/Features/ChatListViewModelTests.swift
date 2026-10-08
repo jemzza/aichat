@@ -127,4 +127,35 @@ struct ChatListViewModelTests {
 
         try await waitUntil { viewModel.selectedChatId == nil }
     }
+
+    @Test func createdChatKeepsScreenButSelectingAnotherReplacesIt() async throws {
+        let existing = Self.chat("Existing", daysAgo: 0)
+        let (viewModel, _, observation) = try await makeViewModel(chats: [existing])
+        defer { observation.cancel() }
+
+        let newChatScreen = viewModel.screenID
+        viewModel.didCreateChat(id: UUID())
+        #expect(viewModel.screenID == newChatScreen)
+
+        viewModel.select(existing)
+        #expect(viewModel.screenID != newChatScreen)
+
+        let existingScreen = viewModel.screenID
+        viewModel.select(existing)
+        #expect(viewModel.screenID == existingScreen)
+    }
+
+    /// Свежесозданный чат может ещё не попасть в снимок списка — выбор не сбрасываем.
+    @Test func createdChatNotYetListedStaysSelected() async throws {
+        let (viewModel, repository, observation) = try await makeViewModel(chats: [Self.chat("Other", daysAgo: 0)])
+        defer { observation.cancel() }
+
+        let id = UUID()
+        viewModel.didCreateChat(id: id)
+        try repository.renameChat(id: viewModel.chats[0].id, title: "Renamed")
+        try await waitUntil { viewModel.chats.first?.title == "Renamed" }
+
+        #expect(viewModel.selectedChatId == id)
+    }
 }
+

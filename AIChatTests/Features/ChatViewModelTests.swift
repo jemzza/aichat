@@ -23,7 +23,22 @@ private final class ManualChatSession: ChatSession {
     func deleteChat(id: UUID) async throws {
         deletedChatIds.append(id)
     }
+
+    var sendResult: Result<UUID, Error> = .success(UUID())
+    private(set) var sent: [(text: String, chatId: UUID?)] = []
+    private(set) var stoppedChatIds: [UUID] = []
+
+    func send(_ text: String, inChat chatId: UUID?) async throws -> UUID {
+        sent.append((text, chatId))
+        return try sendResult.get()
+    }
+
+    func stopGenerating(chatId: UUID) {
+        stoppedChatIds.append(chatId)
+    }
 }
+
+private struct SendFailed: Error {}
 
 @MainActor
 struct ChatViewModelTests {
@@ -102,5 +117,90 @@ struct ChatViewModelTests {
         viewModel.scrollToBottomTapped()
         #expect(viewModel.isPinnedToBottom)
         #expect(!viewModel.showsScrollToBottomButton)
+    }
+
+    // MARK: Поле ввода
+
+    @Test func canSendOnlyNonBlankTextWhileIdle() async throws {
+        let (user, reply) = makeMessages()
+        let repository = InMemoryChatRepository(chats: [chat], messages: [user, reply])
+        let viewModel = ChatViewModel(chatId: chat.id, repository: repository, session: ManualChatSession())
+        let messagesTask = Task { await viewModel.observeMessages() }
+        defer { messagesTask.cancel() }
+        try await waitUntil { viewModel.hasLoaded }
+
+        viewModel.inputText = "Next question"
+        #expect(viewModel.isGenerating)
+        #expect(!viewModel.canSend)
+
+        try repository.updateMessage(id: reply.id, text: "Hello", status: .done, failure: nil)
+        try await waitUntil { !viewModel.isGenerating }
+        #expect(viewModel.canSend)
+
+        viewModel.inputText = "  \n "
+        #expect(!viewModel.canSend)
+    }
+
+    @Test func sendFromNewChatAdoptsCreatedChat() async {
+        let session = ManualChatSession()
+        let createdId = UUID()
+        session.sendResult = .success(createdId)
+        var reported: [UUID] = []
+        let viewModel = ChatViewModel(chatId: nil, repository: InMemoryChatRepository(), session: session,
+                                      onChatCreated: { reported.append($0) })
+
+        viewModel.inputText = "  Hello there \n"
+        await viewModel.send()
+
+        #expect(session.sent.map(\.text) == ["Hello there"])
+        #expect(session.sent.first?.chatId == nil)
+        #expect(viewModel.chatId == createdId)
+        #expect(reported == [createdId])
+        #expect(viewModel.inputText.isEmpty)
+    }
+
+    @Test func sendToExistingChatDoesNotReportCreation() async {
+        let session = ManualChatSession()
+        session.sendResult = .success(chat.id)
+        var reported: [UUID] = []
+        let viewModel = ChatViewModel(chatId: chat.id, repository: InMemoryChatRepository(), session: session,
+                                      onChatCreated: { reported.append($0) })
+
+        viewModel.inputText = "Hi"
+        await viewModel.send()
+
+        #expect(session.sent.first?.chatId == chat.id)
+        #expect(reported.isEmpty)
+    }
+
+    @Test func failedSendRestoresText() async {
+        let session = ManualChatSession()
+        session.sendResult = .failure(SendFailed())
+        let viewModel = ChatViewModel(chatId: nil, repository: InMemoryChatRepository(), session: session)
+
+        viewModel.inputText = "Keep me"
+        await viewModel.send()
+
+        #expect(viewModel.inputText == "Keep me")
+        #expect(viewModel.sendFailed)
+        #expect(viewModel.chatId == nil)
+    }
+
+    @Test func stopIsForwardedOnlyWhileGenerating() async throws {
+        let (user, reply) = makeMessages()
+        let repository = InMemoryChatRepository(chats: [chat], messages: [user, reply])
+        let session = ManualChatSession()
+        let viewModel = ChatViewModel(chatId: chat.id, repository: repository, session: session)
+        let messagesTask = Task { await viewModel.observeMessages() }
+        defer { messagesTask.cancel() }
+        try await waitUntil { viewModel.hasLoaded }
+
+        viewModel.stop()
+        #expect(session.stoppedChatIds == [chat.id])
+
+        try repository.updateMessage(id: reply.id, text: "Hel", status: .cancelled, failure: nil)
+        try await waitUntil { !viewModel.isGenerating }
+        viewModel.stop()
+        #expect(session.stoppedChatIds == [chat.id])
     }
 }
