@@ -64,12 +64,15 @@ struct GroqProvider: LLMProvider {
         if context.first?.role != .system {
             context.insert(LLMMessage(role: .system, content: systemPrompt), at: 0)
         }
+        // gpt-oss фото не принимает: запрос с фото целиком уходит в vision-модель.
+        // У Qwen рассуждения выключаются `reasoning_effort: none`, `include_reasoning` она не знает.
+        let hasImages = context.contains { !$0.images.isEmpty }
         let body = RequestBody(
-            model: configuration.model,
-            messages: context.map { .init(role: $0.role.rawValue, content: $0.content) },
+            model: hasImages ? configuration.visionModel : configuration.model,
+            messages: context.map { RequestBody.Message($0) },
             stream: true,
-            reasoningEffort: "low",
-            includeReasoning: false,
+            reasoningEffort: hasImages ? "none" : "low",
+            includeReasoning: hasImages ? nil : false,
             maxCompletionTokens: maxCompletionTokens
         )
         let encoder = JSONEncoder()
@@ -81,14 +84,59 @@ struct GroqProvider: LLMProvider {
     struct RequestBody: Codable, Equatable {
         struct Message: Codable, Equatable {
             let role: String
-            let content: String
+            let content: Content
+        }
+
+        /// Текст строкой или, если есть фото, массив частей OpenAI-формата:
+        /// `[{"type":"text",…}, {"type":"image_url","image_url":{"url":"data:image/jpeg;base64,…"}}]`.
+        enum Content: Codable, Equatable, ExpressibleByStringLiteral {
+            case text(String)
+            case parts([Part])
+
+            struct Part: Codable, Equatable {
+                struct ImageURL: Codable, Equatable {
+                    let url: String
+                }
+
+                let type: String
+                var text: String?
+                var imageUrl: ImageURL?
+
+                static func text(_ text: String) -> Part { Part(type: "text", text: text) }
+
+                static func jpeg(_ data: Data) -> Part {
+                    Part(type: "image_url", imageUrl: ImageURL(url: "data:image/jpeg;base64,\(data.base64EncodedString())"))
+                }
+            }
+
+            init(stringLiteral value: String) {
+                self = .text(value)
+            }
+
+            init(from decoder: any Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                if let text = try? container.decode(String.self) {
+                    self = .text(text)
+                } else {
+                    self = .parts(try container.decode([Part].self))
+                }
+            }
+
+            func encode(to encoder: any Encoder) throws {
+                var container = encoder.singleValueContainer()
+                switch self {
+                case let .text(text): try container.encode(text)
+                case let .parts(parts): try container.encode(parts)
+                }
+            }
         }
 
         let model: String
         let messages: [Message]
         let stream: Bool
         let reasoningEffort: String
-        let includeReasoning: Bool
+        /// `nil` — не отправляется (vision-модель параметр не поддерживает).
+        let includeReasoning: Bool?
         let maxCompletionTokens: Int
     }
 
@@ -130,5 +178,18 @@ struct GroqProvider: LLMProvider {
         }
         // Соединение закрылось без `[DONE]` — ответ, скорее всего, обрезан.
         throw LLMError(kind: .unknown)
+    }
+}
+
+extension GroqProvider.RequestBody.Message {
+    init(_ message: LLMMessage) {
+        role = message.role.rawValue
+        guard !message.images.isEmpty else {
+            content = .text(message.content)
+            return
+        }
+        // Сообщение только с фото — без пустой текстовой части.
+        let text = message.content.isEmpty ? [] : [GroqProvider.RequestBody.Content.Part.text(message.content)]
+        content = .parts(text + message.images.map(GroqProvider.RequestBody.Content.Part.jpeg))
     }
 }

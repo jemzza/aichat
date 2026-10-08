@@ -54,12 +54,12 @@ final class PreviewChatSession: ChatSession {
         return stream
     }
 
-    func send(_ text: String, inChat chatId: UUID?) async throws -> UUID {
+    func send(_ text: String, images: [ImageAttachment], inChat chatId: UUID?) async throws -> UUID {
         let date = now()
         let isOnline = connectivity.isOnline
         let chatId = chatId ?? UUID()
         let message = Message(chatId: chatId, role: .user, text: text,
-                              status: isOnline ? .sent : .pending, createdAt: date)
+                              status: isOnline ? .sent : .pending, images: images, createdAt: date)
         if try await chatExists(chatId) {
             try await repository.insertMessage(message)
         } else {
@@ -86,6 +86,11 @@ final class PreviewChatSession: ChatSession {
         else { return }
         startGeneration(chatId: chatId, messageId: assistantMessageId, initialText: "", provider: provider)
     }
+
+    /// Превью не показывает «Answer offline»: модель на устройстве — только в `ChatService`.
+    var canAnswerOffline: Bool { false }
+
+    func answerOffline(messageId: UUID, inChat chatId: UUID) async throws {}
 
     func deleteChat(id: UUID) async throws {
         generations[id]?.task.cancel()
@@ -171,6 +176,7 @@ extension ChatDependencies {
             speech: FakeSpeechSynthesizer(),
             recorder: FakeVoiceRecorder(),
             transcriber: FakeSpeechTranscriber(),
+            prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: "Groq · gpt-oss-120b"
         )
     }

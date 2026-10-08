@@ -11,6 +11,8 @@ enum ErrorKind: String, Hashable, Sendable {
     case forbidden
     /// 5xx.
     case server
+    /// Модель на устройстве не поддерживает язык запроса.
+    case unsupportedLanguage
     case unknown
 }
 

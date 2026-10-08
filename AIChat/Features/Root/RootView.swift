@@ -100,6 +100,7 @@ private struct ChatScreenContent: View {
                                                        speech: dependencies.speech,
                                                        recorder: dependencies.recorder,
                                                        transcriber: dependencies.transcriber,
+                                                       prepareImage: dependencies.prepareImage,
                                                        openSettings: Self.openAppSettings))
     }
 

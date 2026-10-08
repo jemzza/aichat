@@ -23,6 +23,9 @@ struct MessageErrorPresentation: Sendable {
         case .server:
             title = "The AI service is having problems. Please try again."
             systemImage = "exclamationmark.icloud"
+        case .unsupportedLanguage:
+            title = "The on-device model doesn't support this language."
+            systemImage = "character.bubble"
         case .unknown:
             title = "Something went wrong."
             systemImage = "exclamationmark.triangle"

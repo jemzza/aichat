@@ -6,11 +6,14 @@ struct MessageActions {
     var isCopied = false
     var canReadAloud = false
     var isReadingAloud = false
+    /// «Answer offline» под сообщением `pending` (модель на устройстве, iOS 26).
+    var canAnswerOffline = false
     var copy: () -> Void = {}
     var toggleReadAloud: () -> Void = {}
     var retry: () -> Void = {}
     /// Копирование блока кода из ответа.
     var copyText: (String) -> Void = { _ in }
+    var answerOffline: () -> Void = {}
 }
 
 /// Одно сообщение: пузырь пользователя справа или ответ ассистента на всю ширину
@@ -21,7 +24,7 @@ struct MessageRow: View {
 
     var body: some View {
         switch message.role {
-        case .user: UserMessage(message: message)
+        case .user: UserMessage(message: message, actions: actions)
         case .assistant: AssistantMessage(message: message, actions: actions)
         }
     }
@@ -31,24 +34,57 @@ struct MessageRow: View {
 
 private struct UserMessage: View {
     let message: Message
+    let actions: MessageActions
+
+    @State private var openedImage: ImageAttachment?
+    @ScaledMetric(relativeTo: .body) private var singleImageSide: CGFloat = 200
+    @ScaledMetric(relativeTo: .body) private var imageSide: CGFloat = 96
 
     var body: some View {
         TrailingFractionLayout(fraction: 0.8) {
             VStack(alignment: .trailing, spacing: 6) {
-                // Текст сообщения — пользовательские данные, а не строка интерфейса.
-                Text(message.text)
-                    .textStyle(.userMessage)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.appSurface, in: .rect(cornerRadius: 20))
+                if !message.images.isEmpty {
+                    images
+                }
+                if !message.text.isEmpty {
+                    // Текст сообщения — пользовательские данные, а не строка интерфейса.
+                    Text(message.text)
+                        .textStyle(.userMessage)
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.appSurface, in: .rect(cornerRadius: 20))
+                }
 
                 if message.status == .pending {
                     Label("Will send when online", systemImage: "clock")
                         .textStyle(.caption)
                         .foregroundStyle(.secondary)
+                    if actions.canAnswerOffline {
+                        Button("Answer offline", systemImage: "cpu", action: actions.answerOffline)
+                            .font(.subheadline.weight(.medium))
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.capsule)
+                            .tint(.appAccent)
+                            .accessibilityHint(Text("Answers with the model on this device"))
+                    }
                 }
+            }
+        }
+        .sheet(item: $openedImage) { ImageViewer(attachment: $0) }
+    }
+
+    /// Одно фото — крупно, несколько — рядом квадратами. Нажатие открывает фото целиком.
+    private var images: some View {
+        let side = message.images.count == 1 ? singleImageSide : imageSide
+        return HStack(spacing: 6) {
+            ForEach(message.images) { image in
+                Button { openedImage = image } label: {
+                    AttachmentThumbnail(attachment: image, side: side, cornerRadius: 16)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(Text("Opens the photo"))
             }
         }
     }
@@ -306,7 +342,7 @@ private struct MessageStatesPreview: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(messages) { message in
-                    MessageRow(message: message, actions: MessageActions(canRetry: true))
+                    MessageRow(message: message, actions: MessageActions(canRetry: true, canAnswerOffline: true))
                 }
             }
             .padding()

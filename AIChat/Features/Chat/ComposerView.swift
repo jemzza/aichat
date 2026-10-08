@@ -1,4 +1,16 @@
+import PhotosUI
 import SwiftUI
+
+/// Фото во вложении. Собирает `ChatView` из `ChatViewModel`.
+struct ComposerAttachments {
+    var images: [ImageAttachment] = []
+    /// Сколько ещё можно выбрать; 0 — «+» неактивна.
+    var remainingSlots = ImageAttachment.maxPerMessage
+    var isPreparing = false
+    /// `nil` в массиве — фото не удалось загрузить из библиотеки.
+    var add: ([Data?]) -> Void = { _ in }
+    var remove: (UUID) -> Void = { _ in }
+}
 
 /// Диктовка в поле ввода. Собирает `ChatView` из `DictationViewModel`.
 struct ComposerDictation {
@@ -25,6 +37,8 @@ struct ComposerView: View {
     let canSend: Bool
     /// `nil` — диктовки нет.
     var dictation: ComposerDictation?
+    /// `nil` — кнопки «+» нет.
+    var attachments: ComposerAttachments?
     let onSend: () -> Void
     let onStop: () -> Void
 
@@ -54,6 +68,9 @@ struct ComposerView: View {
 
     private var card: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if let attachments, !attachments.images.isEmpty || attachments.isPreparing {
+                AttachmentStrip(attachments: attachments)
+            }
             TextField("Message…", text: $text, axis: .vertical)
                 .lineLimit(1...6)
                 .textStyle(.userMessage)
@@ -62,6 +79,10 @@ struct ComposerView: View {
                 .padding(.top, 4)
 
             HStack(spacing: 8) {
+                if let attachments {
+                    AddPhotoButton(attachments: attachments)
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                }
                 if let dictation {
                     DictationStatus(state: dictation.state, duration: dictation.duration, level: dictation.level)
                         // Статус в одной строке с кнопками — растёт вместе с ними, не больше.
@@ -106,6 +127,78 @@ struct ComposerView: View {
                 onSend()
             }
         }
+    }
+}
+
+/// «+» слева внизу: выбор фото из библиотеки (`PhotosPicker`, без доступа ко всей медиатеке).
+private struct AddPhotoButton: View {
+    let attachments: ComposerAttachments
+
+    @State private var isPickerPresented = false
+    @State private var selection: [PhotosPickerItem] = []
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 34
+
+    var body: some View {
+        Button("Add photo", systemImage: "plus") { isPickerPresented = true }
+            .labelStyle(.iconOnly)
+            .font(.system(size: size * 0.5, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: size, height: size)
+            .overlay { Circle().strokeBorder(.secondary.opacity(0.35)) }
+            .contentShape(.circle)
+            .disabled(attachments.remainingSlots == 0 || attachments.isPreparing)
+            .photosPicker(isPresented: $isPickerPresented, selection: $selection,
+                          maxSelectionCount: max(attachments.remainingSlots, 1),
+                          selectionBehavior: .ordered, matching: .images)
+            .onChange(of: selection) { _, items in
+                guard !items.isEmpty else { return }
+                selection = []
+                let add = attachments.add
+                Task {
+                    var originals: [Data?] = []
+                    for item in items {
+                        originals.append(try? await item.loadTransferable(type: Data.self))
+                    }
+                    add(originals)
+                }
+            }
+    }
+}
+
+/// Миниатюры выбранных фото над полем ввода, у каждой — «Remove photo».
+private struct AttachmentStrip: View {
+    let attachments: ComposerAttachments
+
+    @ScaledMetric(relativeTo: .body) private var side: CGFloat = 64
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(attachments.images) { image in
+                    AttachmentThumbnail(attachment: image, side: side)
+                        .overlay(alignment: .topTrailing) {
+                            Button("Remove photo", systemImage: "xmark.circle.fill") {
+                                attachments.remove(image.id)
+                            }
+                            .labelStyle(.iconOnly)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .black.opacity(0.6))
+                            .font(.title3)
+                            .padding(2)
+                        }
+                }
+                if attachments.isPreparing {
+                    ProgressView()
+                        .frame(width: side, height: side)
+                        .background(.secondary.opacity(0.1), in: .rect(cornerRadius: 12))
+                        .accessibilityLabel(Text("Preparing photo"))
+                }
+            }
+            .padding(.top, 4)
+        }
+        .scrollIndicators(.hidden)
+        // Миниатюры не растут бесконечно с Dynamic Type — поле ввода важнее.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 }
 
@@ -286,6 +379,8 @@ private struct ComposerPreview: View {
             ComposerView(text: $long, isGenerating: false, canSend: true, onSend: {}, onStop: {})
             ComposerView(text: $filled, isGenerating: false, canSend: true,
                          dictation: ComposerDictation(state: .recording, duration: .seconds(3), level: 0.6), onSend: {}, onStop: {})
+            ComposerView(text: $empty, isGenerating: false, canSend: true, dictation: ComposerDictation(),
+                         attachments: ComposerAttachments(isPreparing: true), onSend: {}, onStop: {})
             ComposerView(text: $empty, isGenerating: false, canSend: false,
                          dictation: ComposerDictation(state: .unavailable(.microphoneDenied), canOpenSettings: true),
                          onSend: {}, onStop: {})

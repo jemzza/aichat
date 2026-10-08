@@ -1,0 +1,68 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AI Chat"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "AIChat"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Permission prompt for the microphone (dictation). Must match project.yml.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictation uses the microphone to turn your speech into text. Audio is processed on this device and never saved."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диктовка использует микрофон, чтобы превратить речь в текст. Звук обрабатывается на этом устройстве и не сохраняется."
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "comment" : "Permission prompt for speech recognition (dictation). Must match project.yml.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dictation recognizes your speech on this device to type your message."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диктовка распознаёт речь на этом устройстве, чтобы набрать ваше сообщение."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.1"
+}

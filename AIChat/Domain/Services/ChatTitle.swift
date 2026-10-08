@@ -6,9 +6,11 @@ enum ChatTitle {
 
     /// Пробелы и переводы строк схлопываются; длинный текст режется по границе слова
     /// (если слово не слишком длинное) и получает «…».
+    /// Сообщение только с фото (без текста) — заголовок «Photo».
     static func make(from text: String) -> String {
         let words = text.split(whereSeparator: \.isWhitespace)
         let line = words.joined(separator: " ")
+        guard !line.isEmpty else { return String(localized: "Photo") }
         guard line.count > maxLength else { return line }
 
         let head = line.prefix(maxLength - 1)

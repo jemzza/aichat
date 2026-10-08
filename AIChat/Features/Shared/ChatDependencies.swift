@@ -12,6 +12,8 @@ struct ChatDependencies {
     /// Диктовка в поле ввода: запись голоса и её распознавание.
     let recorder: any VoiceRecording
     let transcriber: any SpeechTranscribing
+    /// Фото из библиотеки → уменьшенный JPEG для вложения; `nil` — это не картинка.
+    let prepareImage: @Sendable (Data) async -> Data?
     /// Подпись под названием чата («Groq · <model>»).
     let modelName: LocalizedStringResource
 }

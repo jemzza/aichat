@@ -69,6 +69,20 @@ struct AppDatabase: Sendable {
                 columns: ["chatId", "createdAt"]
             )
         }
+
+        // «v2» занят папками (ветка feat/folders) — у миграций разные имена, порядок между
+        // ними не важен: таблицы независимы.
+        migrator.registerMigration("v3") { db in
+            // Фото сообщений. Отдельная таблица: запись стрима (`updateMessage`) не трогает
+            // строки с BLOB, а история читает фото только нужных сообщений.
+            // Удаление чата → сообщения → фото каскадом.
+            try db.create(table: AttachmentRecord.databaseTableName) { t in
+                t.primaryKey("id", .blob)
+                t.belongsTo(MessageRecord.databaseTableName, onDelete: .cascade).notNull()
+                t.column("position", .integer).notNull()
+                t.column("data", .blob).notNull()
+            }
+        }
         return migrator
     }
 }
