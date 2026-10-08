@@ -6,6 +6,8 @@ struct MessageActions {
     var isCopied = false
     var copy: () -> Void = {}
     var retry: () -> Void = {}
+    /// Копирование блока кода из ответа.
+    var copyText: (String) -> Void = { _ in }
 }
 
 /// Одно сообщение: пузырь пользователя справа или ответ ассистента на всю ширину
@@ -58,7 +60,10 @@ private struct AssistantMessage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !message.text.isEmpty {
-                AssistantText(text: message.text)
+                MarkdownView(text: message.text, copyCode: actions.copyText)
+                    .textStyle(.assistantMessage)
+                    .foregroundStyle(.primary)
+                    .animation(.easeOut(duration: 0.25), value: message.text)
             }
             footer
         }
@@ -90,28 +95,6 @@ private struct AssistantMessage: View {
         case .pending, .sent:
             EmptyView()
         }
-    }
-}
-
-private struct AssistantText: View {
-    let text: String
-
-    var body: some View {
-        // Блочный markdown — шаг 4.7; пока только инлайн-разметка.
-        Text(Self.inlineMarkdown(text))
-            .textStyle(.assistantMessage)
-            .foregroundStyle(.primary)
-            .lineSpacing(3)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // Плавное появление новых токенов.
-            .contentTransition(.opacity)
-            .animation(.easeOut(duration: 0.25), value: text)
-    }
-
-    private static func inlineMarkdown(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 }
 

@@ -125,6 +125,12 @@ final class ChatViewModel {
         retryFailed = false
     }
 
+    /// Копирование произвольного фрагмента ответа (блок кода).
+    func copyText(_ text: String) {
+        guard !text.isEmpty else { return }
+        copyToClipboard(text)
+    }
+
     func copy(_ message: Message) {
         guard !message.text.isEmpty else { return }
         copyToClipboard(message.text)

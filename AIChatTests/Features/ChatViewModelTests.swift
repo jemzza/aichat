@@ -255,5 +255,9 @@ struct ChatViewModelTests {
         viewModel.copy(reply)
         #expect(clipboard == ["Answer"])
         #expect(viewModel.copiedMessageId == reply.id)
+
+        viewModel.copyText("let x = 1")
+        viewModel.copyText("")
+        #expect(clipboard == ["Answer", "let x = 1"])
     }
 }

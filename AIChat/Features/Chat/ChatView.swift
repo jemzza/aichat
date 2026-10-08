@@ -90,7 +90,8 @@ struct ChatView: View {
             canRetry: viewModel.canRetry(message),
             isCopied: viewModel.copiedMessageId == message.id,
             copy: { viewModel.copy(message) },
-            retry: { Task { await viewModel.retry(message) } }
+            retry: { Task { await viewModel.retry(message) } },
+            copyText: { viewModel.copyText($0) }
         )
     }
 
