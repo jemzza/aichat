@@ -94,6 +94,15 @@ struct ChatView: View {
         } message: {
             Text("Please try again.")
         }
+        .alert("Couldn't answer offline", isPresented: offlineAnswerFailedBinding) {
+            Button("OK", role: .cancel) { viewModel.dismissOfflineAnswerFailure() }
+        } message: {
+            Text("Please try again.")
+        }
+    }
+
+    private var offlineAnswerFailedBinding: Binding<Bool> {
+        Binding { viewModel.offlineAnswerFailed } set: { if !$0 { viewModel.dismissOfflineAnswerFailure() } }
     }
 
     private var retryFailedBinding: Binding<Bool> {
@@ -106,10 +115,12 @@ struct ChatView: View {
             isCopied: viewModel.copiedMessageId == message.id,
             canReadAloud: viewModel.canReadAloud(message),
             isReadingAloud: viewModel.speakingMessageId == message.id,
+            canAnswerOffline: viewModel.canAnswerOffline(message),
             copy: { viewModel.copy(message) },
             toggleReadAloud: { viewModel.toggleReadAloud(message) },
             retry: { Task { await viewModel.retry(message) } },
-            copyText: { viewModel.copyText($0) }
+            copyText: { viewModel.copyText($0) },
+            answerOffline: { Task { await viewModel.answerOffline(message) } }
         )
     }
 

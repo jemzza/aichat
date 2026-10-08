@@ -43,11 +43,11 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 | Лимиты в UI | При 429 читаем заголовок `retry-after` (только секунды, как присылает Groq; HTTP-дату не разбираем) и показываем «Try again in N s» на плашке ошибки; остальные `x-ratelimit-*` не используем | Понятная ошибка «кончился лимит» без лишней логики |
 | Контекст запроса | Системный промпт («отвечай на языке пользователя, кратко») добавляет сам `GroqProvider`, если история не начинается с `system` (у Foundation Models это будут `instructions`) + `ChatRepository.history(chatId:before:limit:)`: user — `sent`; assistant — `done` и `cancelled` с непустым текстом; `failed`/`interrupted`/`pending`/`streaming` пропускаются. `limit` = последние 20 сообщений, дополнительно `ChatService` режет до ~6000 символов (≈2K токенов + до 1K на ответ — укладываемся в 8K TPM и ~70+ запросов в день по TPD) | Экономия лимита ключа; частичный ответ после «Стоп» — тоже контекст |
 | Автозаголовок | Обрезка первого сообщения пользователя (~40 символов), без запроса к LLM | Не тратить лимит |
-| Офлайн-AI | Foundation Models за `#available(iOS 26, *)`, тот же протокол `LLMProvider`. Без сети по умолчанию — `pending`; если системная модель доступна — кнопка «Answer offline». Автоматически офлайн-моделью не отвечаем | Правила 1 и 6 offline-first не конфликтуют; качество локальной модели ниже |
+| Офлайн-AI | Foundation Models за `#if canImport` + `#available(iOS 26, *)` — `FoundationModelsProvider` (протокол `OnDeviceLLMProvider: LLMProvider` + `isAvailable`). Без сети по умолчанию — `pending`; если сети нет и системная модель доступна — кнопка «Answer offline» под **первым** `pending` в чате (`ChatSession.answerOffline` → тот же атомарный `claimPending`, генерация — моделью на устройстве). Автоматически офлайн-моделью не отвечаем. История складывается в текст промпта (`OnDevicePrompt`), инструкции — тот же системный промпт; снимки стрима превращаются в дельты. «Retry»/«Regenerate» всегда идут в Groq. Модель ответа в БД не храним — подпись в верхней панели остаётся «Groq · …». Ошибка «язык не поддерживается» — новый `ErrorKind.unsupportedLanguage` | Правила 1 и 6 offline-first не конфликтуют; качество локальной модели ниже. Проверено (2026-10-08): модель доступна на симуляторе iOS 26 (на Mac включён Apple Intelligence), русский в `supportedLanguages` нет, но отвечает; первый токен после холодного старта — ~25 с. Фреймворк слинкован weak — приложение запускается на iOS 18 |
 | Сеть | `URLSession.bytes(for:)` + собственный SSE-парсер, построчный (`AsyncBytes.lines` пропускает пустые строки — разделитель событий не нужен, у Groq одно событие = одна строка `data:`). Транспорт — за протоколом `HTTPLineStreaming` (заголовок ответа + строки тела), в тестах — заглушка | Без лишних зависимостей; провайдер тестируется без сети и `URLProtocol` |
 | Статус сети | `NWPathMonitor` за протоколом `ConnectivityMonitoring` | Для outbox и баннера «нет сети»; в тестах и DEBUG — фейк (на симуляторе монитор ненадёжен) |
 | Ключ | XOR с солью, генерация `scripts/gen_secrets.py` из env. **Запускает пользователь вручную**, агент — никогда. Файл закоммичен; пустой ключ (`GroqConfiguration.hasAPIKey == false`) → ошибка `unauthorized` | Ключ не попадает в чат с агентом и в git открытым текстом |
-| DEBUG-хуки | Launch-аргументы `-mockData`, `-mockOffline`, `-mockError 429\|401\|403\|500\|offline`, `-mockSlowStream` разбирает `LaunchOptions`; `AppContainer` по умолчанию собирает **только реальные** реализации, фейк подключается лишь при своём аргументе. В Release аргументы игнорируются (`#if DEBUG`) | Сценарии ошибок проверяемы без правки кода; фейки не могут попасть в обычный запуск |
+| DEBUG-хуки | Launch-аргументы `-mockData`, `-mockOffline`, `-mockError 429\|401\|403\|500\|offline`, `-mockSlowStream`, `-mockDictation`, `-mockOnDeviceModel` (фейковая модель на устройстве, работает и на iOS 18) разбирает `LaunchOptions`; `AppContainer` по умолчанию собирает **только реальные** реализации, фейк подключается лишь при своём аргументе. В Release аргументы игнорируются (`#if DEBUG`) | Сценарии ошибок проверяемы без правки кода; фейки не могут попасть в обычный запуск |
 | Фейки | `AIChat/Mocks/` под `#if DEBUG`: `InMemoryChatRepository`, `FakeLLMProvider`, `FakeConnectivityMonitor`, `PreviewData`. Доступны превью, DEBUG-хукам и тестам (`@testable import`) | «Preview Content» исключает из Release только ассеты, не Swift-код |
 | Создание чата | Чат пишется в БД только вместе с первым сообщением (`insertChat(_:firstMessage:)`, одна транзакция). «New chat» — черновик во ViewModel | В БД и в «Recents» не бывает пустых чатов |
 | Ошибки репозитория | `MessageNotFound` / `ChatNotFound` вместо падения: чат могли удалить во время стрима. `ChatService` глотает `MessageNotFound` при записи ответа | Удаление во время генерации — штатный сценарий |
@@ -88,7 +88,8 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
   Хранится в БД (две колонки), чтобы «Try again in N s» была верной и после
   перезапуска. Есть только у ответа ассистента со статусом `failed`.
 - `ErrorKind`: `offline`, `rateLimited` (429), `unauthorized` (401 или нет ключа),
-  `forbidden` (403, например регион), `server` (5xx), `unknown`.
+  `forbidden` (403, например регион), `server` (5xx), `unsupportedLanguage`
+  (модель на устройстве не знает язык), `unknown`.
 - `LLMError`: `kind: ErrorKind`, `retryAfter: Duration?` — то, что бросает `LLMProvider`.
 - Ошибки репозитория: `MessageNotFound(id)`, `ChatNotFound(id)`.
 
@@ -109,7 +110,8 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 - `ChatSession` — то, что экранам нужно от `ChatService` сверх чтения из
   репозитория: `draftUpdates(chatId:) -> AsyncStream<StreamingDraft?>` (живой
   черновик), `send(_:inChat:) -> UUID` (`nil` — новый чат), `stopGenerating`,
-  `retry(assistantMessageId:inChat:)`, `deleteChat`. `@MainActor`.
+  `retry(assistantMessageId:inChat:)`, `canAnswerOffline` / `answerOffline(messageId:inChat:)`
+  (модель на устройстве), `deleteChat`. `@MainActor`.
 - `BackgroundTaskScheduling` — `beginTask(expiration:)` / `endTask(_:)`
   (обёртка над `beginBackgroundTask`).
 

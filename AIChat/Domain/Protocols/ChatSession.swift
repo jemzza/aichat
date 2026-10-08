@@ -29,6 +29,14 @@ protocol ChatSession: AnyObject {
     /// Повторное нажатие во время генерации ничего не делает (`ChatRepository.claimRetry`).
     func retry(assistantMessageId: UUID, inChat chatId: UUID) async throws
 
+    /// Можно ли сейчас ответить на `pending` моделью на устройстве: сети нет,
+    /// а системная модель доступна (iOS 26). Иначе кнопки «Answer offline» нет.
+    var canAnswerOffline: Bool { get }
+
+    /// «Answer offline»: сообщение `pending` → `sent`, ответ генерирует модель на устройстве.
+    /// Ничего не делает, если ответить офлайн нельзя или сообщение уже ушло.
+    func answerOffline(messageId: UUID, inChat chatId: UUID) async throws
+
     /// Удаляет чат и отменяет его генерацию, если она идёт.
     func deleteChat(id: UUID) async throws
 }

@@ -78,6 +78,12 @@ struct DependencyPlanTests {
                 == DependencyPlan(storage: .disk, network: .system, model: .failing(.rateLimited)))
     }
 
+    @Test func mockOnDeviceModelSwitchesOnlyOnDeviceModel() {
+        #expect(DependencyPlan(options: LaunchOptions(arguments: ["app", "-mockOnDeviceModel"]))
+                == DependencyPlan(storage: .disk, network: .system, model: .groq, onDeviceModel: .scripted))
+        #expect(DependencyPlan(options: .none).onDeviceModel == .system)
+    }
+
     /// Ошибка важнее медленного стрима: сценарий ошибки проверяем независимо.
     @Test func mockErrorWinsOverSlowStream() {
         let options = LaunchOptions(arguments: ["app", "-mockSlowStream", "-mockError", "403"])

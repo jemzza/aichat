@@ -87,6 +87,11 @@ final class PreviewChatSession: ChatSession {
         startGeneration(chatId: chatId, messageId: assistantMessageId, initialText: "", provider: provider)
     }
 
+    /// Превью не показывает «Answer offline»: модель на устройстве — только в `ChatService`.
+    var canAnswerOffline: Bool { false }
+
+    func answerOffline(messageId: UUID, inChat chatId: UUID) async throws {}
+
     func deleteChat(id: UUID) async throws {
         generations[id]?.task.cancel()
         try await repository.deleteChat(id: id)

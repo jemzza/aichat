@@ -6,11 +6,14 @@ struct MessageActions {
     var isCopied = false
     var canReadAloud = false
     var isReadingAloud = false
+    /// «Answer offline» под сообщением `pending` (модель на устройстве, iOS 26).
+    var canAnswerOffline = false
     var copy: () -> Void = {}
     var toggleReadAloud: () -> Void = {}
     var retry: () -> Void = {}
     /// Копирование блока кода из ответа.
     var copyText: (String) -> Void = { _ in }
+    var answerOffline: () -> Void = {}
 }
 
 /// Одно сообщение: пузырь пользователя справа или ответ ассистента на всю ширину
@@ -21,7 +24,7 @@ struct MessageRow: View {
 
     var body: some View {
         switch message.role {
-        case .user: UserMessage(message: message)
+        case .user: UserMessage(message: message, actions: actions)
         case .assistant: AssistantMessage(message: message, actions: actions)
         }
     }
@@ -31,6 +34,7 @@ struct MessageRow: View {
 
 private struct UserMessage: View {
     let message: Message
+    let actions: MessageActions
 
     var body: some View {
         TrailingFractionLayout(fraction: 0.8) {
@@ -48,6 +52,14 @@ private struct UserMessage: View {
                     Label("Will send when online", systemImage: "clock")
                         .textStyle(.caption)
                         .foregroundStyle(.secondary)
+                    if actions.canAnswerOffline {
+                        Button("Answer offline", systemImage: "cpu", action: actions.answerOffline)
+                            .font(.subheadline.weight(.medium))
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.capsule)
+                            .tint(.appAccent)
+                            .accessibilityHint(Text("Answers with the model on this device"))
+                    }
                 }
             }
         }
@@ -306,7 +318,7 @@ private struct MessageStatesPreview: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 ForEach(messages) { message in
-                    MessageRow(message: message, actions: MessageActions(canRetry: true))
+                    MessageRow(message: message, actions: MessageActions(canRetry: true, canAnswerOffline: true))
                 }
             }
             .padding()

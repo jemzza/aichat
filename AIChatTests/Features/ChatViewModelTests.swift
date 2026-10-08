@@ -42,6 +42,13 @@ private final class ManualChatSession: ChatSession {
     func retry(assistantMessageId: UUID, inChat chatId: UUID) async throws {
         retriedMessageIds.append(assistantMessageId)
     }
+
+    var canAnswerOffline = false
+    private(set) var offlineAnsweredMessageIds: [UUID] = []
+
+    func answerOffline(messageId: UUID, inChat chatId: UUID) async throws {
+        offlineAnsweredMessageIds.append(messageId)
+    }
 }
 
 private struct SendFailed: Error {}
@@ -240,6 +247,28 @@ struct ChatViewModelTests {
         try repository.insertMessage(streaming)
         try await waitUntil { viewModel.isGenerating }
         #expect(!viewModel.canRetry(failed))
+    }
+
+    /// «Answer offline» — только у первого `pending` и только когда сервис это разрешает.
+    @Test func answerOfflineOnlyForFirstPendingWhenAvailable() async throws {
+        let first = Message(chatId: chat.id, role: .user, text: "One", status: .pending, createdAt: .now)
+        let second = Message(chatId: chat.id, role: .user, text: "Two", status: .pending,
+                             createdAt: .now.addingTimeInterval(1))
+        let repository = InMemoryChatRepository(chats: [chat], messages: [first, second])
+        let session = ManualChatSession()
+        let viewModel = ChatViewModel(chatId: chat.id, repository: repository, session: session)
+        let messagesTask = Task { await viewModel.observeMessages() }
+        defer { messagesTask.cancel() }
+        try await waitUntil { viewModel.messages.count == 2 }
+
+        #expect(!viewModel.canAnswerOffline(first))
+        session.canAnswerOffline = true
+        #expect(viewModel.canAnswerOffline(first))
+        #expect(!viewModel.canAnswerOffline(second))
+
+        await viewModel.answerOffline(second)
+        await viewModel.answerOffline(first)
+        #expect(session.offlineAnsweredMessageIds == [first.id])
     }
 
     @Test func copyWritesTextAndMarksMessage() {

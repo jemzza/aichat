@@ -27,6 +27,8 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
 
     private let repository: any ChatRepository
     private let provider: any LLMProvider
+    /// Модель на устройстве для «Answer offline»; `nil` — iOS 18 или нет Foundation Models.
+    private let onDeviceProvider: (any OnDeviceLLMProvider)?
     private let connectivity: any ConnectivityMonitoring
     private let backgroundTasks: (any BackgroundTaskScheduling)?
     private let clock: C
@@ -42,6 +44,7 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
     init(
         repository: any ChatRepository,
         provider: any LLMProvider,
+        onDeviceProvider: (any OnDeviceLLMProvider)? = nil,
         connectivity: any ConnectivityMonitoring,
         backgroundTasks: (any BackgroundTaskScheduling)? = nil,
         clock: C,
@@ -50,6 +53,7 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
     ) {
         self.repository = repository
         self.provider = provider
+        self.onDeviceProvider = onDeviceProvider
         self.connectivity = connectivity
         self.backgroundTasks = backgroundTasks
         self.clock = clock
@@ -119,7 +123,20 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
               // Пока ждали базу, мог стартовать outbox в этом же чате.
               generations[chatId] == nil
         else { return }
-        startGeneration(chatId: chatId, messageId: assistantMessageId)
+        startGeneration(chatId: chatId, messageId: assistantMessageId, provider: provider)
+    }
+
+    var canAnswerOffline: Bool {
+        !connectivity.isOnline && onDeviceProvider?.isAvailable == true
+    }
+
+    func answerOffline(messageId: UUID, inChat chatId: UUID) async throws {
+        guard canAnswerOffline, let onDeviceProvider, generations[chatId] == nil,
+              let message = try await repository.pendingMessages().first(where: { $0.id == messageId }),
+              // Пока ждали базу, могла появиться сеть (outbox) или начаться другая генерация.
+              canAnswerOffline, generations[chatId] == nil
+        else { return }
+        _ = try await claimAndGenerate(message, provider: onDeviceProvider)
     }
 
     func deleteChat(id: UUID) async throws {
@@ -154,28 +171,31 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
     }
 
     /// Атомарно `pending` → `sent` + ответ `streaming`; `nil` — сообщение уже забрали.
-    private func claimAndGenerate(_ message: Message) async throws -> Task<Void, Never>? {
+    private func claimAndGenerate(
+        _ message: Message,
+        provider: (any LLMProvider)? = nil
+    ) async throws -> Task<Void, Never>? {
         // Ответ сразу после своего вопроса, даже если за ним уже стоят другие `pending`.
         let reply = Message(chatId: message.chatId, role: .assistant, text: "", status: .streaming,
                             createdAt: message.createdAt.addingTimeInterval(0.001))
         guard try await repository.claimPending(messageId: message.id, reply: reply) else { return nil }
-        return startGeneration(chatId: message.chatId, messageId: reply.id)
+        return startGeneration(chatId: message.chatId, messageId: reply.id, provider: provider ?? self.provider)
     }
 
     // MARK: Генерация
 
     @discardableResult
-    private func startGeneration(chatId: UUID, messageId: UUID) -> Task<Void, Never> {
+    private func startGeneration(chatId: UUID, messageId: UUID, provider: any LLMProvider) -> Task<Void, Never> {
         generations[chatId] = Generation(messageId: messageId)
         let task = Task { [weak self] () -> Void in
-            await self?.generate(chatId: chatId, messageId: messageId)
+            await self?.generate(chatId: chatId, messageId: messageId, provider: provider)
         }
         generations[chatId]?.task = task
         publishDraft(chatId: chatId)
         return task
     }
 
-    private func generate(chatId: UUID, messageId: UUID) async {
+    private func generate(chatId: UUID, messageId: UUID, provider: any LLMProvider) async {
         let backgroundToken = backgroundTasks?.beginTask { [weak self] in
             self?.generations[chatId]?.interruptedBySystem = true
             self?.generations[chatId]?.task?.cancel()

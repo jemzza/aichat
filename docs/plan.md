@@ -110,7 +110,7 @@ iOS 18 и iOS 26.
 
 ## 6. Бонусы (по остатку времени, скорее всего не влезут)
 
-- [ ] 6.1 `FoundationModelsProvider` (iOS 26) + кнопка «Answer offline».
+- [x] 6.1 `FoundationModelsProvider` (iOS 26) + кнопка «Answer offline».
       Сначала проверить: доступность модели на симуляторе и поддержку языка.
 - [ ] 6.2 Mac Catalyst в `project.yml`.
 - [ ] 6.3 Фото во вложении (`PhotosPicker`, мультимодальная модель).
@@ -230,3 +230,9 @@ _Сюда записываем, что пошло не так и что реши
   в 7.C (разрешения выдаёт пользователь). Системный текст запроса
   `SFSpeechRecognizer` говорит про отправку в Apple, хотя мы требуем
   `requiresOnDeviceRecognition`, — упомянуть в README.
+- 6.x (ветка `feat/bonuses` от `main`, все бонусы раздела 6 подряд — решение
+  заказчика). 6.1: модель на устройстве доступна на симуляторе iOS 26, русского
+  нет в `supportedLanguages`, но отвечает (слабее); добавлен `ErrorKind.unsupportedLanguage`.
+  «Answer offline» — только у первого `pending` в чате; «Retry» всегда через Groq;
+  какая модель ответила, в БД не храним. `-mockOnDeviceModel` — для проверки на iOS 18.
+  Первый ответ после холодного старта модели — ~25 с (без `prewarm`).

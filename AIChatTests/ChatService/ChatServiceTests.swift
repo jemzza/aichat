@@ -218,6 +218,74 @@ struct ChatServiceTests {
         #expect(harness.provider.requests.last?.map(\.content) == ["First", "Ok", "Second"])
     }
 
+    // MARK: Ответ на устройстве
+
+    private func makeOnDeviceHarness(
+        isOnline: Bool = false,
+        isAvailable: Bool = true
+    ) throws -> (harness: Harness, onDevice: FakeOnDeviceLLMProvider, service: ChatService<ManualClock>) {
+        let base = try makeHarness(isOnline: isOnline)
+        let onDevice = FakeOnDeviceLLMProvider(script: .reply("Local answer", tokenDelay: .zero),
+                                               isAvailable: isAvailable)
+        let dates = SteppingDates(start: Self.fixedNow)
+        let service = ChatService(repository: base.repository, provider: base.provider,
+                                  onDeviceProvider: onDevice, connectivity: base.connectivity,
+                                  clock: ManualClock(), now: { dates.next() })
+        return (base, onDevice, service)
+    }
+
+    @Test func answerOfflineUsesOnDeviceModelForPendingMessage() async throws {
+        let (harness, onDevice, service) = try makeOnDeviceHarness()
+        let chatId = try await service.send("Question", inChat: nil)
+        #expect(service.canAnswerOffline)
+        let pending = try await messages(harness, chatId: chatId) { !$0.isEmpty }
+
+        try await service.answerOffline(messageId: try #require(pending.first).id, inChat: chatId)
+
+        let messages = try await messages(harness, chatId: chatId) { $0.last?.status == .done }
+        #expect(messages.map(\.status) == [.sent, .done])
+        #expect(messages.last?.text == "Local answer")
+        #expect(onDevice.requests == [[LLMMessage(role: .user, content: "Question")]])
+        #expect(harness.provider.requests.isEmpty)
+        // Вопрос уже `sent` — появление сети не отправит его второй раз.
+        try await waitUntil { !service.isGenerating(chatId: chatId) }
+        harness.connectivity.setOnline(true)
+        await service.processOutbox()
+        #expect(harness.provider.requests.isEmpty)
+    }
+
+    @Test func answerOfflineIsUnavailableOnlineOrWithoutModel() async throws {
+        let online = try makeOnDeviceHarness(isOnline: true)
+        #expect(!online.service.canAnswerOffline)
+
+        let (harness, onDevice, service) = try makeOnDeviceHarness(isAvailable: false)
+        #expect(!service.canAnswerOffline)
+        let chatId = try await service.send("Question", inChat: nil)
+        let pending = try await messages(harness, chatId: chatId) { !$0.isEmpty }
+
+        try await service.answerOffline(messageId: try #require(pending.first).id, inChat: chatId)
+
+        #expect(try await messages(harness, chatId: chatId) { !$0.isEmpty }.map(\.status) == [.pending])
+        #expect(onDevice.requests.isEmpty)
+        onDevice.setAvailable(true)
+        #expect(service.canAnswerOffline)
+    }
+
+    /// Двойное нажатие: второй вызов видит, что сообщение уже не `pending`.
+    @Test func doubleAnswerOfflineStartsOneGeneration() async throws {
+        let (harness, onDevice, service) = try makeOnDeviceHarness()
+        let chatId = try await service.send("Question", inChat: nil)
+        let messageId = try #require(try await messages(harness, chatId: chatId) { !$0.isEmpty }.first).id
+
+        async let first: Void = service.answerOffline(messageId: messageId, inChat: chatId)
+        async let second: Void = service.answerOffline(messageId: messageId, inChat: chatId)
+        _ = try await (first, second)
+
+        let messages = try await messages(harness, chatId: chatId) { $0.last?.status == .done }
+        #expect(messages.count == 2)
+        #expect(onDevice.requests.count == 1)
+    }
+
     // MARK: Удаление и прерывание
 
     @Test func deletingChatCancelsGeneration() async throws {

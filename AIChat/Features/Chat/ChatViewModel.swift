@@ -31,6 +31,9 @@ final class ChatViewModel {
     private(set) var isSending = false
     private(set) var sendFailed = false
     private(set) var retryFailed = false
+    private(set) var offlineAnswerFailed = false
+    /// Запрос «Answer offline» ушёл в сервис — защита от двойного нажатия.
+    private(set) var isAnsweringOffline = false
     /// Только что скопированный ответ — на иконке на секунду появляется галочка.
     private(set) var copiedMessageId: UUID?
     /// Ответ, который сейчас озвучивается (из `SpeechSynthesizing.playbackUpdates()`);
@@ -202,6 +205,32 @@ final class ChatViewModel {
 
     func dismissRetryFailure() {
         retryFailed = false
+    }
+
+    // MARK: Ответ на устройстве
+
+    /// «Answer offline» — у первого `pending` в чате: ответ встаёт сразу за ним, а более
+    /// поздние вопросы уйдут, когда появится сеть (и получат этот ответ в контексте).
+    func canAnswerOffline(_ message: Message) -> Bool {
+        guard message.role == .user, message.status == .pending, !isGenerating, !isAnsweringOffline,
+              session.canAnswerOffline else { return false }
+        return messages.first { $0.status == .pending }?.id == message.id
+    }
+
+    func answerOffline(_ message: Message) async {
+        guard let chatId, canAnswerOffline(message) else { return }
+        isAnsweringOffline = true
+        isPinnedToBottom = true
+        defer { isAnsweringOffline = false }
+        do {
+            try await session.answerOffline(messageId: message.id, inChat: chatId)
+        } catch {
+            offlineAnswerFailed = true
+        }
+    }
+
+    func dismissOfflineAnswerFailure() {
+        offlineAnswerFailed = false
     }
 
     /// Копирование произвольного фрагмента ответа (блок кода).
