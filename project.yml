@@ -1,0 +1,76 @@
+name: AIChat
+
+options:
+  bundleIdPrefix: com.example.aichat
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  developmentLanguage: ru
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "7.0.0"
+
+targets:
+  AIChat:
+    type: application
+    platform: iOS
+    sources:
+      - path: AIChat
+    dependencies:
+      - package: GRDB
+    info:
+      path: AIChat/Info.plist
+      properties:
+        CFBundleDisplayName: AI Chat
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.aichat.app
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  AIChatTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AIChatTests
+    dependencies:
+      - target: AIChat
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.aichat.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  AIChat:
+    build:
+      targets:
+        AIChat: all
+        AIChatTests: [test]
+    test:
+      targets:
+        - AIChatTests

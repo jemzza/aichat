@@ -1,0 +1,51 @@
+# Xcode / XcodeGen — проект генерируется из project.yml
+*.xcodeproj
+*.xcworkspace
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# SPM
+.build/
+.swiftpm/
+# Package.resolved не игнорируем — фиксирует версии зависимостей
+
+# Инструменты, которые качает Build.command
+.tools/
+
+# Секреты в открытом виде
+.env
+.env.*
+*.env
+*.secret
+*.secrets
+secrets.json
+*.p8
+*.p12
+*.mobileprovision
+# Сгенерированный файл с ОБФУСЦИРОВАННЫМ ключом коммитим:
+# без него проект не соберётся сразу после клонирования.
+!AIChat/Data/Secrets/Secrets.generated.swift
+
+# Python
+__pycache__/
+*.pyc
+
+# Тесты / покрытие
+*.xcresult
+
+# macOS / редакторы
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*~
+.idea/
+.vscode/
