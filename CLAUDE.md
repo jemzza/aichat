@@ -59,7 +59,11 @@ NO_PAUSE=1 ./Build.command
   (GRDB, LLM-провайдеры, сеть, секреты).
 - Зависимости передаются через инициализаторы и протоколы. Никаких синглтонов,
   кроме `AppContainer` в точке входа. DI-фреймворки не использовать.
-- Модели домена — `struct`, `Sendable`, `Equatable`.
+- Модели домена — `struct`/`enum`, `Sendable`, `Hashable` (`Domain/Models/`),
+  протоколы — `Domain/Protocols/`.
+- Фейки — только в `AIChat/Mocks/` под `#if DEBUG`. `AppContainer` по умолчанию
+  собирает реальные реализации; фейк подключается только своим
+  launch-аргументом (`LaunchOptions`).
 - Новые SPM-зависимости — только с обоснованием в `docs/task.md`. CocoaPods запрещён.
 
 ## Swift и платформа
@@ -70,9 +74,14 @@ NO_PAUSE=1 ./Build.command
 - Swift 6, строгая конкурентность. Не глуши предупреждения через
   `@unchecked Sendable` / `nonisolated(unsafe)` без комментария «почему».
 - Без force unwrap (`!`) и `try!` в продакшен-коде (в тестах можно).
-- Базовый язык интерфейса — **английский**. Тексты через
-  `String(localized:)`/`LocalizedStringKey`, ключи — английские фразы,
-  каталог `Localizable.xcstrings`. Документация и план — на русском.
+- Язык интерфейса — **английский**. Каждая строка, которую видит
+  пользователь, идёт через String Catalog (`Localizable.xcstrings`):
+  `LocalizedStringKey` (литерал в `Text`/`Button`), `String(localized:)` или
+  `LocalizedStringResource`; ключ — английская фраза. Без хардкода:
+  никаких `Text(verbatim:)` и обычных `String` из кода в UI — чтобы русский
+  можно было добавить только переводом каталога. Документация (`docs/`,
+  `CLAUDE.md`, README), комментарии и коммиты — как раньше (доки на русском,
+  коммиты на английском).
 - API новее iOS 18 (в т.ч. `.glassEffect` и прочий Liquid Glass) — только за
   `#available`; UI проверяй на iOS 18 и iOS 26.
 - Цвета: системные (`.primary`, `.secondary` и т.п.) **или** цвета из

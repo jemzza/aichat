@@ -27,16 +27,20 @@
 
 ## 1. Данные (~1 ч)
 
-- [ ] 1.1 Доменные модели `Chat`, `Message`, `MessageStatus` (два автомата),
-      `ErrorKind` (включая `forbidden`) — по `docs/task.md`.
+- [ ] 1.1 Доменные модели (`Chat`, `Message`, `MessageStatus`, `MessageFailure`,
+      `ErrorKind`, `LLMMessage`, `LLMError`, ошибки репозитория) и все протоколы
+      Domain: `ChatRepository`, `LLMProvider`, `ConnectivityMonitoring`.
+      Фейки в `Mocks/` (`InMemoryChatRepository`, `FakeLLMProvider`,
+      `FakeConnectivityMonitor`, `PreviewData`). `LaunchOptions` (разбор
+      DEBUG-аргументов, по умолчанию — без фейков). Контрактные тесты
+      репозитория (параметризованные) на `InMemoryChatRepository`.
 - [ ] 1.2 GRDB: `AppDatabase`, миграция v1 (FK с `ON DELETE CASCADE`),
       записи для `Chat`/`Message`, сортировка `createdAt, rowid`.
-- [ ] 1.3 `ChatRepository` (протокол в Domain, реализация в Data):
-      создать/удалить/переименовать чат, добавить/обновить сообщение,
-      атомарный `claimPending` (`pending` → `sent` + ответ `streaming`),
-      `observeChats()`, `observeMessages(chatId:)` как `AsyncStream`.
-- [ ] 1.4 Тесты репозитория на in-memory базе (включая каскадное удаление и
-      повторный `claimPending` → ничего не делает).
+- [ ] 1.3 `GRDBChatRepository` в Data — реализация протокола из 1.1
+      (транзакции для `insertChat(_:firstMessage:)`, `claimPending`,
+      `claimRetry`; `ValueObservation` → `AsyncStream`).
+- [ ] 1.4 Подключить GRDB-реализацию (in-memory `DatabaseQueue`) к контрактным
+      тестам из 1.1 — все должны пройти без изменений тестов.
 - [ ] 1.5 При старте: `streaming` → `interrupted` + тест.
 
 ## 2. AI-клиент (~1 ч 30 мин)
@@ -45,8 +49,6 @@
       и лимиты RPM/TPD; проверить доступность API из страны проверяющего.
       _Модель и лимиты записаны (gpt-oss-120b); осталось 👤 проверить
       доступность из страны проверяющего._
-- [ ] 2.1 Протокол `LLMProvider` → `AsyncThrowingStream<String, Error>`;
-      протокол `ConnectivityProviding`.
 - [ ] 2.2 `SSEParser` построчный (`data:`, `[DONE]`, мусор, ошибка в `data:`) + тесты.
 - [ ] 2.3 `GroqProvider`: запрос `stream: true`, контекст по правилам из
       `docs/task.md`, разбор дельт, отмена через `Task` cancellation.
@@ -55,16 +57,18 @@
 
 ## 3. Логика чата (~2 ч)
 
-- [ ] 3.1 `ConnectivityMonitor` на `NWPathMonitor` + фейк для тестов/DEBUG.
+- [ ] 3.1 `NetworkConnectivityMonitor` на `NWPathMonitor` (фейк уже есть с 1.1).
 - [ ] 3.2 `ChatService`: отправка, живой черновик в памяти, троттлинг записи
       в БД (инжектируемый `Clock`), стоп, повтор, outbox (сеть / запуск /
       foreground), отмена при удалении чата, `beginBackgroundTask`.
 - [ ] 3.3 Тесты `ChatService` с фейковыми провайдером и сетью на in-memory БД:
       троттлинг, «Стоп» → `cancelled` с частичным текстом, ошибка → `failed`
-      + `errorKind`, outbox без двойной отправки, повтор.
+      + `failure`, outbox без двойной отправки, двойной «Retry», запись в
+      удалённый чат (`MessageNotFound` проглатывается), обрезка контекста.
 - [ ] 3.4 Автозаголовок чата обрезкой первого сообщения.
-- [ ] 3.5 DEBUG launch-аргументы `-mockOffline`, `-mockError <code>`,
-      `-mockSlowStream` в `AppContainer`.
+- [ ] 3.5 Подключить DEBUG launch-аргументы (`LaunchOptions` из 1.1) к сборке
+      зависимостей в `AppContainer`: `-mockData`, `-mockOffline`,
+      `-mockError <code>`, `-mockSlowStream`.
 
 ## 4. UI (~5 ч)
 
@@ -130,3 +134,16 @@ _Сюда записываем, что пошло не так и что реши
 - 0.3: заглушка `Secrets` не нужна — пользователь сгенерировал и закоммитил
   `Secrets.generated.swift` до начала работы. Пустой ключ всё равно маппится в
   `unauthorized` (шаг 2.4). Тест проверяет форму реального ключа, а не синтетику.
+- 1.1 расширен по решению заказчика: протоколы `LLMProvider` и
+  `ConnectivityMonitoring` (было 2.1, имя было `ConnectivityProviding`) и
+  `ChatRepository` (было 1.3) объявлены сразу, вместе с фейками — чтобы UI
+  можно было делать без базы и сети. 2.1 удалён, 1.3 — только GRDB-реализация,
+  1.4 — подключение её к уже написанным контрактным тестам. Разбор
+  launch-аргументов (`LaunchOptions`) — тоже в 1.1, подключение — в 3.5.
+- Модель данных: `errorKind?` → `failure: MessageFailure?` (`kind` + `retryAt`),
+  чтобы «Try again in N s» переживала перезапуск. Добавлены `claimRetry`
+  (защита от двойного «Retry»), `history(…limit:)` (cancelled с текстом идёт
+  в контекст), `MessageNotFound`/`ChatNotFound`, чат создаётся только вместе с
+  первым сообщением. `claimPending` возвращает `Bool` вместо `Message?`.
+- Язык интерфейса — английский без русских дублей в UI-референсе; все строки
+  только через String Catalog.
