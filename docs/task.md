@@ -88,7 +88,8 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
   `claimRetry(assistantMessageId:) -> Bool`, `markStreamingAsInterrupted`.
 - `LLMProvider` — `displayName: LocalizedStringResource`,
   `streamReply(to: [LLMMessage]) -> AsyncThrowingStream<String, Error>`;
-  отмена `Task` потребителя прерывает запрос.
+  отмена `Task` потребителя прерывает запрос, а цикл `for try await` при этом
+  заканчивается **без ошибки** — «Stop» определяется по `Task.isCancelled`.
 - `ConnectivityMonitoring` — `isOnline`, `updates() -> AsyncStream<Bool>`
   (текущее значение сразу, дальше только изменения; поток на подписчика).
 

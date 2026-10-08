@@ -2,6 +2,9 @@ import Foundation
 
 /// Корень композиции: создаёт и держит зависимости приложения.
 /// Единственный «глобальный» объект — живёт в `AIChatApp` и передаётся дальше через инициализаторы.
+///
+/// По умолчанию — только реальные реализации. Фейки из `Mocks/` подключаются
+/// исключительно через `LaunchOptions` (DEBUG launch-аргументы, шаг 3.5).
 @MainActor
 final class AppContainer {
     enum Environment: Sendable, Equatable {
@@ -13,10 +16,16 @@ final class AppContainer {
     }
 
     let environment: Environment
+    let launchOptions: LaunchOptions
     let groqConfiguration: GroqConfiguration
 
-    init(environment: Environment, groqConfiguration: GroqConfiguration = .bundled()) {
+    init(
+        environment: Environment,
+        launchOptions: LaunchOptions = .none,
+        groqConfiguration: GroqConfiguration = .bundled()
+    ) {
         self.environment = environment
+        self.launchOptions = launchOptions
         self.groqConfiguration = groqConfiguration
     }
 

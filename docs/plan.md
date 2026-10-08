@@ -27,7 +27,7 @@
 
 ## 1. Данные (~1 ч)
 
-- [ ] 1.1 Доменные модели (`Chat`, `Message`, `MessageStatus`, `MessageFailure`,
+- [x] 1.1 Доменные модели (`Chat`, `Message`, `MessageStatus`, `MessageFailure`,
       `ErrorKind`, `LLMMessage`, `LLMError`, ошибки репозитория) и все протоколы
       Domain: `ChatRepository`, `LLMProvider`, `ConnectivityMonitoring`.
       Фейки в `Mocks/` (`InMemoryChatRepository`, `FakeLLMProvider`,

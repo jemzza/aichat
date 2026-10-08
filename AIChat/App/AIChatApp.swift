@@ -3,7 +3,8 @@ import SwiftUI
 @main
 struct AIChatApp: App {
     @State private var container = AppContainer(
-        environment: AppContainer.environment(for: .processInfo)
+        environment: AppContainer.environment(for: .processInfo),
+        launchOptions: LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
     )
 
     var body: some Scene {
