@@ -54,26 +54,29 @@ struct SidebarView: View {
     }
 
     private var chatList: some View {
-        List {
-            Text("Recents")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-            ForEach(viewModel.sections) { section in
-                Section {
-                    ForEach(section.chats) { chat in
-                        row(for: chat)
-                    }
-                } header: {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                Text("Recents")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 16)
+                ForEach(viewModel.sections) { section in
                     Text(section.group.title)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 14)
+                        .padding(.bottom, 4)
+                        .accessibilityAddTraits(.isHeader)
+                    ForEach(section.chats) { chat in
+                        row(for: chat)
+                    }
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 16)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.immediately)
     }
 
@@ -86,16 +89,15 @@ struct SidebarView: View {
             // Название чата — пользовательские данные, а не строка интерфейса.
             Text(chat.title)
                 .lineLimit(1)
+                .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(isSelected ? AnyShapeStyle(.appSurface) : AnyShapeStyle(.clear),
+                            in: .rect(cornerRadius: 10))
+                .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .listRowSeparator(.hidden)
-        .listRowBackground(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? AnyShapeStyle(.appSurface) : AnyShapeStyle(.clear))
-                .padding(.horizontal, 8)
-        )
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
             Button("Rename", systemImage: "pencil") { viewModel.beginRename(chat) }
