@@ -13,9 +13,11 @@ final class AppContainer {
     }
 
     let environment: Environment
+    let groqConfiguration: GroqConfiguration
 
-    init(environment: Environment) {
+    init(environment: Environment, groqConfiguration: GroqConfiguration = .bundled()) {
         self.environment = environment
+        self.groqConfiguration = groqConfiguration
     }
 
     static func environment(for processInfo: ProcessInfo) -> Environment {
