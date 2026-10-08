@@ -63,7 +63,7 @@ final class PreviewChatSession: ChatSession {
         if try await chatExists(chatId) {
             try await repository.insertMessage(message)
         } else {
-            let title = String(text.prefix(40))
+            let title = ChatTitle.make(from: text)
             try await repository.insertChat(Chat(id: chatId, title: title, createdAt: date, updatedAt: date),
                                             firstMessage: message)
         }

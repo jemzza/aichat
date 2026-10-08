@@ -51,3 +51,31 @@ struct LaunchOptionsTests {
         #expect(LaunchOptions(arguments: ["app", "-mockError"]).mockError == .unknown)
     }
 }
+
+struct DependencyPlanTests {
+    /// Обычный запуск — только реальные реализации.
+    @Test func defaultsToRealImplementations() {
+        let plan = DependencyPlan(options: .none)
+        #expect(plan.storage == .disk)
+        #expect(plan.network == .system)
+        #expect(plan.model == .groq)
+    }
+
+    @Test func eachFlagSwitchesOnlyItsPart() {
+        #expect(DependencyPlan(options: LaunchOptions(arguments: ["app", "-mockData"]))
+                == DependencyPlan(storage: .previewData, network: .system, model: .groq))
+        #expect(DependencyPlan(options: LaunchOptions(arguments: ["app", "-mockOffline"]))
+                == DependencyPlan(storage: .disk, network: .offline, model: .groq))
+        #expect(DependencyPlan(options: LaunchOptions(arguments: ["app", "-mockSlowStream"]))
+                == DependencyPlan(storage: .disk, network: .system, model: .slowStream))
+        #expect(DependencyPlan(options: LaunchOptions(arguments: ["app", "-mockError", "429"]))
+                == DependencyPlan(storage: .disk, network: .system, model: .failing(.rateLimited)))
+    }
+
+    /// Ошибка важнее медленного стрима: сценарий ошибки проверяем независимо.
+    @Test func mockErrorWinsOverSlowStream() {
+        let options = LaunchOptions(arguments: ["app", "-mockSlowStream", "-mockError", "403"])
+        #expect(DependencyPlan(options: options).model == .failing(.forbidden))
+    }
+}
+

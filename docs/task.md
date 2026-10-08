@@ -32,6 +32,7 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 | Архитектура | MVVM + offline-first | База — единый источник правды; UI подписан на неё, сеть только пишет |
 | Живой стриминг | Исключение из offline-first: `ChatService` отдаёт черновик текущего ответа (`AsyncStream`) в памяти; ViewModel показывает его поверх сообщения со статусом `streaming`. В БД — не чаще ~2 раз/с + финальная запись | Иначе при записи 2 раза/с текст появлялся бы кусками раз в 500 мс, а не по токенам |
 | Владелец стрима | `ChatService` (живёт в `AppContainer`), не ViewModel | Уход с экрана / смена чата не отменяет генерацию |
+| Где `ChatService` | `Domain/Services/ChatService.swift`; реализует протокол `ChatSession` (`Domain/Protocols`). Зависит только от Domain-протоколов и Foundation: время — инжектируемый `Clock`, фоновая задача — протокол `BackgroundTaskScheduling` (реализация на UIKit — в `App/`) | Логика без UI и без GRDB; тестируется на фейках и in-memory БД. ViewModel видят только `ChatSession`, а не сервис |
 | UI | SwiftUI, `@Observable` | Нативно для iOS 18+ |
 | Язык интерфейса | Английский (`developmentLanguage: en`). Все строки интерфейса — только через String Catalog (`Localizable.xcstrings`): `LocalizedStringKey`, `String(localized:)`, `LocalizedStringResource`; никакого `Text(verbatim:)` и строк из кода в UI | Решение заказчика; русский можно добавить переводом каталога (бонус 6.4). Документация — на русском |
 | Хранилище | GRDB 7 (SPM), версия зафиксирована `exactVersion` в `project.yml` | `ValueObservation` → `AsyncSequence` хорошо ложится на MVVM; модели — `Sendable struct`; SwiftData тянет `@Query` во View и плохо дружит со строгой конкурентностью. `Package.resolved` лежит внутри игнорируемого `.xcodeproj`, поэтому версию фиксируем в спеке |
@@ -92,6 +93,12 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
   заканчивается **без ошибки** — «Stop» определяется по `Task.isCancelled`.
 - `ConnectivityMonitoring` — `isOnline`, `updates() -> AsyncStream<Bool>`
   (текущее значение сразу, дальше только изменения; поток на подписчика).
+- `ChatSession` — то, что экранам нужно от `ChatService` сверх чтения из
+  репозитория: `draftUpdates(chatId:) -> AsyncStream<StreamingDraft?>` (живой
+  черновик), `send(_:inChat:) -> UUID` (`nil` — новый чат), `stopGenerating`,
+  `retry(assistantMessageId:inChat:)`, `deleteChat`. `@MainActor`.
+- `BackgroundTaskScheduling` — `beginTask(expiration:)` / `endTask(_:)`
+  (обёртка над `beginBackgroundTask`).
 
 ## Маппинг ошибок
 

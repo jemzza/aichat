@@ -8,11 +8,8 @@ struct StreamingDraft: Hashable, Sendable {
     let text: String
 }
 
-/// То, что экранам нужно от `ChatService` (шаг 3.2) сверх чтения из `ChatRepository`.
-/// `ChatService` реализует этот протокол; превью и `-mockData` — `PreviewChatSession`.
-///
-/// Объявлен в `Features`, а не в `Domain`: это контракт UI-слоя, а `ChatService`
-/// будет писаться параллельно (см. отчёт по шагам 4.1–4.4).
+/// То, что экранам нужно от `ChatService` сверх чтения из `ChatRepository`.
+/// Реализации: `ChatService` (приложение) и `PreviewChatSession` (превью).
 @MainActor
 protocol ChatSession: AnyObject {
     /// Черновик стримящегося ответа в чате: текущее значение сразу, дальше — при каждом токене.
@@ -34,15 +31,4 @@ protocol ChatSession: AnyObject {
 
     /// Удаляет чат и отменяет его генерацию, если она идёт.
     func deleteChat(id: UUID) async throws
-}
-
-/// Всё, из чего собираются экраны. Создаётся в `AppContainer`.
-@MainActor
-struct ChatDependencies {
-    let repository: any ChatRepository
-    let session: any ChatSession
-    /// Для баннера «No connection».
-    let connectivity: any ConnectivityMonitoring
-    /// Подпись под названием чата («Groq · <model>»).
-    let modelName: LocalizedStringResource
 }
