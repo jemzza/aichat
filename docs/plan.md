@@ -116,6 +116,24 @@ iOS 18 и iOS 26.
 - [ ] 6.3 Фото во вложении (`PhotosPicker`, мультимодальная модель).
 - [ ] 6.4 Русская локализация в `Localizable.xcstrings`.
 
+## 7. Голос (бонус, ~3 ч)
+
+Решения — раздел «Голос (бонус)» и таблица «Решения» в `docs/task.md`.
+
+- [ ] 7.A Озвучка ответов: протокол `SpeechSynthesizing` (состояние
+      «какое сообщение читается» — `playbackUpdates()`), очистка Markdown для
+      чтения, выбор голоса по языку (`NLLanguageRecognizer`),
+      `SystemSpeechSynthesizer` на `AVSpeechSynthesizer`, иконка под ответом.
+      Тесты: очистка Markdown, выбор голоса, `ChatViewModel`.
+- [ ] 7.B Диктовка: протокол `SpeechTranscribing`, реализации на
+      `SpeechAnalyzer` (iOS 26) и `SFSpeechRecognizer` on-device (iOS 18) за
+      `#available`, `AVAudioSession`, `NSMicrophoneUsageDescription` /
+      `NSSpeechRecognitionUsageDescription`, состояния записи в поле ввода,
+      отказ в разрешении. Сборка с минимальной iOS 18.
+- [ ] 7.C Проверка: iOS 18 и iOS 26, авиарежим, отказ в разрешениях,
+      прерывание (звонок/Siri), озвучка и диктовка не одновременно, VoiceOver,
+      `ai-logs`.
+
 ## Журнал отклонений от плана
 
 _Сюда записываем, что пошло не так и что решили иначе._
