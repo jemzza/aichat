@@ -28,6 +28,10 @@ protocol ChatSession: AnyObject {
     /// «Stop»: отменяет генерацию в чате; полученный текст сохраняется со статусом `cancelled`.
     func stopGenerating(chatId: UUID)
 
+    /// «Retry»: перезапрашивает ответ `failed`/`interrupted`/`cancelled` в том же сообщении.
+    /// Повторное нажатие во время генерации ничего не делает (`ChatRepository.claimRetry`).
+    func retry(assistantMessageId: UUID, inChat chatId: UUID) async throws
+
     /// Удаляет чат и отменяет его генерацию, если она идёт.
     func deleteChat(id: UUID) async throws
 }

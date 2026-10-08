@@ -80,6 +80,13 @@ final class PreviewChatSession: ChatSession {
         generations[chatId]?.task.cancel()
     }
 
+    func retry(assistantMessageId: UUID, inChat chatId: UUID) async throws {
+        guard generations[chatId] == nil,
+              try await repository.claimRetry(assistantMessageId: assistantMessageId)
+        else { return }
+        startGeneration(chatId: chatId, messageId: assistantMessageId, initialText: "", provider: provider)
+    }
+
     func deleteChat(id: UUID) async throws {
         generations[id]?.task.cancel()
         try await repository.deleteChat(id: id)

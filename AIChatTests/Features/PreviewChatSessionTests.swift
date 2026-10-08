@@ -71,4 +71,23 @@ struct PreviewChatSessionTests {
         let chats = try await firstValue(of: repository.observeChats())
         #expect(chats.count == 1)
     }
+
+    @Test func retryRegeneratesFailedReplyInPlace() async throws {
+        let repository = PreviewData.repository()
+        let provider = FakeLLMProvider(script: .reply("Fresh answer", tokenDelay: .zero))
+        let session = PreviewChatSession(repository: repository, provider: provider)
+        let chatId = PreviewData.offlineChat.id
+        let failed = try #require(PreviewData.messages.first { $0.chatId == chatId && $0.status == .failed })
+
+        try await session.retry(assistantMessageId: failed.id, inChat: chatId)
+
+        let messages = try await firstValue(of: repository.observeMessages(chatId: chatId)) {
+            $0.first { $0.id == failed.id }?.status == .done
+        }
+        let retried = try #require(messages.first { $0.id == failed.id })
+        #expect(retried.text == "Fresh answer")
+        #expect(retried.failure == nil)
+        #expect(messages.count == PreviewData.messages.filter { $0.chatId == chatId }.count)
+    }
 }
+
