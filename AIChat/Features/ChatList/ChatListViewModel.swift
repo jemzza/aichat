@@ -144,15 +144,23 @@ final class ChatListViewModel {
         !renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    func commitRename() async {
-        guard let chat = renamingChat else { return }
+    // Подтверждения из алертов (`commitRename`, `confirmDelete`) синхронны: алерт,
+    // закрываясь, сразу сбрасывает состояние через binding (`cancelRename` и т. п.),
+    // поэтому введённое забираем до записи, а сама запись идёт в возвращаемой
+    // задаче (её ждут тесты).
+
+    @discardableResult
+    func commitRename() -> Task<Void, Never>? {
+        guard let chat = renamingChat else { return nil }
         renamingChat = nil
         let title = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, title != chat.title else { return }
-        do {
-            try await repository.renameChat(id: chat.id, title: title)
-        } catch {
-            actionFailed = true
+        guard !title.isEmpty, title != chat.title else { return nil }
+        return Task {
+            do {
+                try await repository.renameChat(id: chat.id, title: title)
+            } catch {
+                actionFailed = true
+            }
         }
     }
 
@@ -162,14 +170,17 @@ final class ChatListViewModel {
         chatPendingDeletion = chat
     }
 
-    func confirmDelete() async {
-        guard let chat = chatPendingDeletion else { return }
+    @discardableResult
+    func confirmDelete() -> Task<Void, Never>? {
+        guard let chat = chatPendingDeletion else { return nil }
         chatPendingDeletion = nil
         if selectedChatId == chat.id { selectedChatId = nil }
-        do {
-            try await session.deleteChat(id: chat.id)
-        } catch {
-            actionFailed = true
+        return Task {
+            do {
+                try await session.deleteChat(id: chat.id)
+            } catch {
+                actionFailed = true
+            }
         }
     }
 

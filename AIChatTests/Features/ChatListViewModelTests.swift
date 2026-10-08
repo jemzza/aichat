@@ -92,13 +92,13 @@ struct ChatListViewModelTests {
         viewModel.beginRename(chat)
         viewModel.renameText = "   "
         #expect(!viewModel.canCommitRename)
-        await viewModel.commitRename()
+        await viewModel.commitRename()?.value
         #expect(viewModel.renamingChat == nil)
         #expect(viewModel.chats.first?.title == "Old title")
 
         viewModel.beginRename(chat)
         viewModel.renameText = "  New title \n"
-        await viewModel.commitRename()
+        await viewModel.commitRename()?.value
         try await waitUntil { viewModel.chats.first?.title == "New title" }
     }
 
@@ -110,7 +110,7 @@ struct ChatListViewModelTests {
 
         viewModel.select(first)
         viewModel.requestDelete(first)
-        await viewModel.confirmDelete()
+        await viewModel.confirmDelete()?.value
 
         #expect(viewModel.selectedChatId == nil)
         try await waitUntil { viewModel.chats.map(\.id) == [second.id] }
@@ -157,5 +157,28 @@ struct ChatListViewModelTests {
 
         #expect(viewModel.selectedChatId == id)
     }
-}
 
+    // MARK: Алерты
+
+    /// Алерт, закрываясь, сбрасывает состояние через binding сразу после нажатия кнопки —
+    /// раньше, чем начнётся запись. Подтверждение должно пережить этот сброс.
+    @Test func confirmationsSurviveAlertDismissal() async throws {
+        let chat = Self.chat("Old title", daysAgo: 0)
+        let doomed = Self.chat("Doomed", daysAgo: 1)
+        let (viewModel, _, observation) = try await makeViewModel(chats: [chat, doomed])
+        defer { observation.cancel() }
+
+        viewModel.beginRename(chat)
+        viewModel.renameText = "New title"
+        let rename = viewModel.commitRename()
+        viewModel.cancelRename()
+
+        viewModel.requestDelete(doomed)
+        let delete = viewModel.confirmDelete()
+        viewModel.chatPendingDeletion = nil
+
+        for task in [rename, delete] { await task?.value }
+        try await waitUntil { viewModel.chats.map(\.title) == ["New title"] }
+        #expect(!viewModel.actionFailed)
+    }
+}

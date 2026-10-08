@@ -141,7 +141,7 @@ struct ChatListAlerts: ViewModifier {
             .alert("Rename chat", isPresented: renameBinding) {
                 TextField("Title", text: $viewModel.renameText)
                 Button("Cancel", role: .cancel) { viewModel.cancelRename() }
-                Button("Save") { Task { await viewModel.commitRename() } }
+                Button("Save") { viewModel.commitRename() }
                     .disabled(!viewModel.canCommitRename)
             }
             .confirmationDialog(
@@ -149,7 +149,7 @@ struct ChatListAlerts: ViewModifier {
                 isPresented: deleteBinding,
                 titleVisibility: .visible
             ) {
-                Button("Delete", role: .destructive) { Task { await viewModel.confirmDelete() } }
+                Button("Delete", role: .destructive) { viewModel.confirmDelete() }
                 Button("Cancel", role: .cancel) { viewModel.chatPendingDeletion = nil }
             } message: {
                 Text("The chat and all its messages will be removed.")
