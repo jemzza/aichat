@@ -12,6 +12,8 @@
 4. Отметь шаг в `docs/plan.md` как `[x]` и сделай коммит.
 5. Если решение отличается от плана — сначала обнови план/`docs/task.md`
    (раздел «Решения»), потом код.
+6. Шаг с пометкой 👤 в плане — остановись и попроси пользователя сделать
+   свою часть; не пытайся обойти.
 
 ## Команды
 
@@ -24,10 +26,14 @@ xcodebuild -project AIChat.xcodeproj -scheme AIChat \
   -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO build -quiet
 
-# тесты (подставь доступный симулятор из `xcrun simctl list devices available`)
+# тесты (имя и версию симулятора возьми из `xcrun simctl list devices available`;
+# в Xcode 26 по умолчанию iPhone 17, iOS 18 — отдельный рантайм)
 xcodebuild -project AIChat.xcodeproj -scheme AIChat \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
   -derivedDataPath build/DerivedData test -quiet
+
+# полный сценарий как у проверяющего, без ожидания клавиши
+NO_PAUSE=1 ./Build.command
 ```
 
 `AIChat.xcodeproj` генерируется и не коммитится — правь только `project.yml`.
@@ -45,6 +51,9 @@ xcodebuild -project AIChat.xcodeproj -scheme AIChat \
 - **Offline-first.** База (GRDB) — единственный источник правды. UI читает
   только из базы через `ValueObservation` → `AsyncSequence`. Сеть только пишет
   в базу через репозиторий.
+  **Единственное исключение:** живой черновик стримящегося ответа —
+  `ChatService` отдаёт его в памяти, ViewModel накладывает поверх сообщения
+  со статусом `streaming`. Стрим принадлежит `ChatService`, не ViewModel.
 - **Слои:** `App/` (композиция, `AppContainer`), `Features/<Name>/` (View +
   ViewModel), `Domain/` (модели и протоколы, без зависимостей), `Data/`
   (GRDB, LLM-провайдеры, сеть, секреты).
@@ -61,7 +70,11 @@ xcodebuild -project AIChat.xcodeproj -scheme AIChat \
 - Swift 6, строгая конкурентность. Не глуши предупреждения через
   `@unchecked Sendable` / `nonisolated(unsafe)` без комментария «почему».
 - Без force unwrap (`!`) и `try!` в продакшен-коде (в тестах можно).
-- Тексты интерфейса — на русском, через `String(localized:)`/`LocalizedStringKey`.
+- Базовый язык интерфейса — **английский**. Тексты через
+  `String(localized:)`/`LocalizedStringKey`, ключи — английские фразы,
+  каталог `Localizable.xcstrings`. Документация и план — на русском.
+- API новее iOS 18 (в т.ч. `.glassEffect` и прочий Liquid Glass) — только за
+  `#available`; UI проверяй на iOS 18 и iOS 26.
 - Только системные цвета и шрифты (`.primary`, `.secondary`, `Color(.systemBackground)`,
   Dynamic Type) — светлая и тёмная тема должны работать без отдельного кода.
 
@@ -72,16 +85,23 @@ xcodebuild -project AIChat.xcodeproj -scheme AIChat \
 - Ключ попадает в проект только через `scripts/gen_secrets.py` из переменной
   окружения. Файл `Secrets.generated.swift` содержит только обфусцированные байты.
 - Не добавляй ключ в URL, `print`, тексты ошибок, тесты.
+- `gen_secrets.py` запускает только пользователь. Тест деобфускации — на
+  синтетических байтах. Перед коммитом `git grep -n "gsk_"` должен быть пуст.
+- В `ai-logs/` не должно быть ключей, email и путей с именем пользователя.
 
 ## Поведение, которое нельзя сломать
 
 - Стриминг ответа по токенам; «Стоп» отменяет `Task`, уже полученный текст
   сохраняется со статусом `cancelled`.
 - В базу во время стриминга пишем не чаще ~2 раз в секунду + финальная запись.
-- Ошибки различаются: нет сети / 429 лимит / 401 / прочее — у каждой
-  понятный текст и кнопка «Повторить».
+- Ошибки различаются: нет сети / 429 лимит / 401 / 403 / прочее — у каждой
+  понятный текст и кнопка «Retry». Отмена («Стоп») — не ошибка сети.
+  Маппинг — по таблице в `docs/task.md`.
 - При запуске сообщения в статусе `streaming` переводятся в `interrupted`.
-- Сообщение без сети сохраняется как `pending` и уходит само, когда сеть появилась.
+- Сообщение без сети сохраняется как `pending` и уходит само, когда сеть
+  появилась (а также при запуске и возврате в foreground) — ровно один раз.
+- Сценарии ошибок проверяем DEBUG launch-аргументами (`-mockOffline`,
+  `-mockError <code>`), а не временной правкой кода.
 
 ## Когда остановиться и спросить
 

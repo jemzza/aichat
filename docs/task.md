@@ -23,39 +23,86 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 - [ ] Офлайн-режим на Apple Foundation Models (iOS 26+).
 - [ ] Версия для Mac (Mac Catalyst).
 - [ ] Фото во вложении.
+- [ ] Русская локализация интерфейса.
 
 ## Решения
 
 | Вопрос | Решение | Почему |
 |---|---|---|
 | Архитектура | MVVM + offline-first | База — единый источник правды; UI подписан на неё, сеть только пишет |
+| Живой стриминг | Исключение из offline-first: `ChatService` отдаёт черновик текущего ответа (`AsyncStream`) в памяти; ViewModel показывает его поверх сообщения со статусом `streaming`. В БД — не чаще ~2 раз/с + финальная запись | Иначе при записи 2 раза/с текст появлялся бы кусками раз в 500 мс, а не по токенам |
+| Владелец стрима | `ChatService` (живёт в `AppContainer`), не ViewModel | Уход с экрана / смена чата не отменяет генерацию |
 | UI | SwiftUI, `@Observable` | Нативно для iOS 18+ |
-| Хранилище | GRDB 7 (SPM) | `ValueObservation` → `AsyncSequence` хорошо ложится на MVVM; модели — `Sendable struct`; SwiftData тянет `@Query` во View и плохо дружит со строгой конкурентностью |
+| Язык интерфейса | Базовый — английский (`developmentLanguage: en`), тексты через String Catalog (`Localizable.xcstrings`) | Решение заказчика; русская локализация — бонус |
+| Хранилище | GRDB 7 (SPM), версия зафиксирована `exactVersion` в `project.yml` | `ValueObservation` → `AsyncSequence` хорошо ложится на MVVM; модели — `Sendable struct`; SwiftData тянет `@Query` во View и плохо дружит со строгой конкурентностью. `Package.resolved` лежит внутри игнорируемого `.xcodeproj`, поэтому версию фиксируем в спеке |
 | AI-провайдер | Groq, OpenAI-совместимый `/chat/completions` со `stream: true` | Бесплатный тариф, очень быстрый стриминг |
-| Модель | _уточнить актуальную бесплатную модель и лимиты перед реализацией_ | |
-| Офлайн-AI | Foundation Models за `#available(iOS 26, *)` | Тот же протокол `LLMProvider` |
-| Сеть | `URLSession.bytes(for:)` + собственный SSE-парсер | Без лишних зависимостей |
-| Статус сети | `NWPathMonitor` | Для outbox и баннера «нет сети» |
-| Ключ | XOR с солью, генерация `scripts/gen_secrets.py` из env | Ключ не попадает в чат с агентом и в git открытым текстом |
-| Тесты | Swift Testing | SSE-парсер, деобфускация, маппинг ошибок, репозиторий на in-memory БД |
+| Модель | _шаг 2.0: выбрать модель, записать сюда лимиты RPM/TPD, проверить доступность Groq из страны проверяющего_ | |
+| Контекст запроса | Системный промпт («отвечай на языке пользователя, кратко») + последние сообщения со статусом `done`/`sent` в пределах ~8000 символов; `failed`/`cancelled`/`interrupted` ответы не отправляем | Экономия лимита ключа |
+| Автозаголовок | Обрезка первого сообщения пользователя (~40 символов), без запроса к LLM | Не тратить лимит |
+| Офлайн-AI | Foundation Models за `#available(iOS 26, *)`, тот же протокол `LLMProvider`. Без сети по умолчанию — `pending`; если системная модель доступна — кнопка «Answer offline». Автоматически офлайн-моделью не отвечаем | Правила 1 и 6 offline-first не конфликтуют; качество локальной модели ниже |
+| Сеть | `URLSession.bytes(for:)` + собственный SSE-парсер, построчный (`AsyncBytes.lines` пропускает пустые строки — разделитель событий не нужен, у Groq одно событие = одна строка `data:`) | Без лишних зависимостей |
+| Статус сети | `NWPathMonitor` за протоколом `ConnectivityProviding` | Для outbox и баннера «нет сети»; в тестах и DEBUG — фейк (на симуляторе монитор ненадёжен) |
+| Ключ | XOR с солью, генерация `scripts/gen_secrets.py` из env. **Запускает пользователь вручную**, агент — никогда. Пока файла нет — заглушка, которая даёт ошибку `unauthorized` | Ключ не попадает в чат с агентом и в git открытым текстом |
+| DEBUG-хуки | Launch-аргументы `-mockOffline`, `-mockError 429\|401\|403\|500`, `-mockSlowStream` подменяют провайдер/монитор через `AppContainer` (только `#if DEBUG`) | Сценарии ошибок проверяемы без правки кода |
+| Многооконность iPad | Выключена (`UIApplicationSupportsMultipleScenes: false`) | Не тратить время на проверку сценариев с несколькими окнами |
+| Markdown | `AttributedString(markdown:, options: .inlineOnlyPreservingWhitespace)` — только инлайн-разметка, без списков/блоков кода; при ошибке парсинга — простой текст | `Text` не рендерит блочный markdown; полуготовый markdown во время стриминга |
+| Фон во время стриминга | `beginBackgroundTask` на время генерации; если система всё же оборвала — `interrupted` | |
+| Тесты | Swift Testing | SSE-парсер, деобфускация, маппинг ошибок, репозиторий на in-memory БД, `ChatService` с фейками |
 
 ## Модель данных
 
-- `Chat`: `id`, `title`, `createdAt`, `updatedAt`.
-- `Message`: `id`, `chatId`, `role` (`user`/`assistant`), `text`, `status`,
-  `errorKind?`, `createdAt`.
-- `MessageStatus`: `pending` → `streaming` → `done` | `cancelled` | `failed` | `interrupted`.
-- `ErrorKind`: `offline`, `rateLimited`, `unauthorized`, `server`, `unknown`.
+- `Chat`: `id` (UUID), `title`, `createdAt`, `updatedAt`.
+- `Message`: `id` (UUID), `chatId` (FK, `ON DELETE CASCADE`), `role`
+  (`user`/`assistant`), `text`, `status`, `errorKind?`, `createdAt`.
+  Сортировка — `ORDER BY createdAt, rowid` (время может совпасть).
+- `MessageStatus`, два автомата:
+  - **user:** `pending` (нет сети) → `sent`.
+  - **assistant:** `streaming` → `done` | `cancelled` | `failed` | `interrupted`.
+    Повтор (`failed`/`interrupted`/`cancelled`) переиспользует то же
+    сообщение: текст очищается, статус снова `streaming`.
+- `errorKind` хранится только на ответе ассистента (`failed`).
+- `ErrorKind`: `offline`, `rateLimited` (429), `unauthorized` (401 или нет ключа),
+  `forbidden` (403, например регион), `server` (5xx), `unknown`.
+
+## Маппинг ошибок
+
+- `URLError` → `offline` только для `notConnectedToInternet`,
+  `networkConnectionLost`, `dataNotAllowed`, `timedOut`, `cannotFindHost`,
+  `cannotConnectToHost`; прочие `URLError` → `unknown`.
+- `CancellationError` и `URLError.cancelled` — не ошибка, а «Стоп» → `cancelled`.
+- HTTP ≠ 200: дочитать тело (ограниченно), маппить по коду.
+- Ошибка внутри SSE при HTTP 200 (`data: {"error": …}`) → по полю `type`/`code`,
+  иначе `server`.
+- Тексты ошибок не содержат ключ, URL с параметрами и сырой ответ сервера.
 
 ## Offline-first: поведение
 
-1. Отправка: сообщение пользователя сразу пишется в БД. Есть сеть — запрос
-   уходит; нет — статус `pending`, в UI «Отправится, когда появится сеть».
-2. Сеть появилась → `pending` сообщения отправляются автоматически.
-3. Стриминг: текст копится в памяти, в БД — не чаще ~2 раз в секунду и в конце.
+1. Отправка: сообщение пользователя сразу пишется в БД. Есть сеть — в одной
+   транзакции user → `sent` и создаётся ответ ассистента `streaming`; нет —
+   статус `pending`, в UI «Will send when online».
+2. Outbox: при появлении сети, при запуске и при возврате в foreground
+   `pending` отправляются по очереди. Переход `pending` → `sent` атомарный
+   (транзакция с проверкой статуса), поэтому повторные события сети не дают
+   двойной отправки.
+3. Стриминг: текст копится в памяти и идёт в UI через черновик; в БД — не
+   чаще ~2 раз в секунду и в конце.
 4. «Стоп» → статус `cancelled`, частичный текст остаётся.
 5. Запуск приложения: `streaming` → `interrupted` с кнопкой «Повторить».
-6. На iOS 26 с доступной системной моделью без сети можно ответить офлайн.
+6. На iOS 26 с доступной системной моделью без сети можно ответить офлайн
+   по кнопке (см. «Решения»).
+7. Удаление чата во время стриминга отменяет его `Task`; сообщения удаляются каскадом.
+8. «Загрузка» в UI = ожидание первого токена (индикатор «печатает…»).
+
+## Известные риски
+
+- Groq может быть недоступен из некоторых регионов (403) — проверить в шаге 2.0,
+  описать в README.
+- Foundation Models на симуляторе работает, только если на Mac включён Apple
+  Intelligence; поддержка языков ограничена — проверить до начала 6.1.
+- iOS 26 с SDK 26 автоматически применяет Liquid Glass к навбарам/тулбарам —
+  свой фон у поля ввода выглядит по-разному на 18 и 26. `.glassEffect` и
+  другие API iOS 26 — только за `#available`.
+- Рантайм симулятора iOS 18 не входит в Xcode 26 — скачать заранее (шаг 0.1).
 
 ## Вне рамок
 
