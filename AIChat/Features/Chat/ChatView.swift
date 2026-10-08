@@ -140,6 +140,8 @@ struct ChatView: View {
             state: dictation.state,
             level: dictation.level,
             canOpenSettings: dictation.canOpenSettings,
+            press: { viewModel.beginDictation() },
+            release: { Task { await viewModel.endDictation() } },
             toggle: { Task { await viewModel.toggleDictation() } },
             openSettings: { dictation.openSettings() },
             dismissMessage: { dictation.dismissMessage() }

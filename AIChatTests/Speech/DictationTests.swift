@@ -129,4 +129,56 @@ struct DictationTests {
 
         #expect(dictation.state == .idle)
     }
+
+    // MARK: Зажми и говори
+
+    @Test func pressAndReleaseDictatesAndKeepsFinalText() async throws {
+        let transcriber = FakeSpeechTranscriber()
+        let chat = makeChat(transcriber: transcriber)
+        chat.beginDictation()
+        let dictation = try #require(chat.dictation)
+        try await waitUntil { dictation.state == .recording }
+        transcriber.send(.transcript(Transcript(volatile: "hello wor")))
+        try await waitUntil { chat.inputText == "hello wor" }
+
+        let release = Task { await chat.endDictation() }
+        try await waitUntil { transcriber.finishCount == 1 }
+        transcriber.complete(with: "Hello world.")
+        await release.value
+
+        #expect(dictation.state == .idle)
+        #expect(chat.inputText == "Hello world.")
+    }
+
+    @Test func secondPressWhileRecordingDoesNotRestart() async throws {
+        let transcriber = FakeSpeechTranscriber()
+        let chat = makeChat(transcriber: transcriber)
+        chat.beginDictation()
+        chat.beginDictation()
+        #expect(transcriber.dictateCount == 1)
+    }
+
+    @Test func releaseBeforeRecordingShowsHoldHint() async throws {
+        let transcriber = FakeSpeechTranscriber()
+        let dictation = DictationViewModel(transcriber: transcriber)
+        dictation.start(prefix: "") { _ in }
+        // Запись ещё не началась (фейк сразу шлёт `.recording`, поэтому отпускаем синхронно).
+        #expect(dictation.state == .preparing)
+
+        await dictation.release()
+
+        #expect(dictation.state == .holdHint)
+        #expect(DictationMessagePresentation(state: dictation.state) != nil)
+        dictation.dismissMessage()
+        #expect(dictation.state == .idle)
+    }
+
+    @Test func everyUnavailabilityHasMessage() {
+        let reasons: [DictationUnavailability] = [
+            .microphoneDenied, .recognitionDenied, .languageNotSupported, .needsDownload, .serviceUnavailable, .dictationDisabled,
+        ]
+        for reason in reasons {
+            #expect(DictationMessagePresentation(state: .unavailable(reason)) != nil)
+        }
+    }
 }

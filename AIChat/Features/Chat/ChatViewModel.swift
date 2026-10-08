@@ -208,13 +208,28 @@ final class ChatViewModel {
 
     // MARK: Диктовка
 
-    /// Микрофон ↔ «Done».
+    /// Зажали микрофон — начинаем запись (если ещё не идёт).
+    func beginDictation() {
+        guard let dictation, !dictation.isActive else { return }
+        startDictation(dictation)
+    }
+
+    /// Отпустили микрофон.
+    func endDictation() async {
+        await dictation?.release()
+    }
+
+    /// VoiceOver: двойное касание включает и выключает запись (держать кнопку неудобно).
     func toggleDictation() async {
         guard let dictation else { return }
         if dictation.isActive {
             await dictation.finish()
             return
         }
+        startDictation(dictation)
+    }
+
+    private func startDictation(_ dictation: DictationViewModel) {
         dictation.start(prefix: inputText) { [weak self] text in
             self?.dictatedText = text
             self?.inputText = text

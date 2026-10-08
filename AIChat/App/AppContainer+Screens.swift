@@ -165,7 +165,7 @@ extension AppContainer {
         if #available(iOS 26, *), SpeechTranscriber.isAvailable {
             return AnalyzerSpeechTranscriber(connectivity: connectivity)
         }
-        return RecognizerSpeechTranscriber()
+        return RecognizerSpeechTranscriber(connectivity: connectivity)
     }
 
     #if DEBUG

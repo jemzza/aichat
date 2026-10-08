@@ -38,7 +38,8 @@ struct LocalizationTests {
 
     @Test func permissionPromptsAreTranslated() throws {
         let russian = try russianBundle()
-        for key in try catalog("InfoPlist").strings.keys {
+        // Название приложения («AI Chat») не переводим — `shouldTranslate: false`.
+        for key in try catalog("InfoPlist").strings.filter({ $0.value.shouldTranslate != false }).keys {
             let value = russian.localizedString(forKey: key, value: nil, table: "InfoPlist")
             #expect(value != key)
         }

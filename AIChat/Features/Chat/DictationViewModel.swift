@@ -17,6 +17,8 @@ final class DictationViewModel {
         case unavailable(DictationUnavailability)
         /// Что-то пошло не так — можно попробовать ещё раз.
         case failed
+        /// Кнопку отпустили раньше, чем началась запись: подсказываем «зажми и говори».
+        case holdHint
     }
 
     private(set) var state = State.idle
@@ -48,7 +50,7 @@ final class DictationViewModel {
     var isActive: Bool {
         switch state {
         case .preparing, .downloading, .recording: true
-        case .idle, .unavailable, .failed: false
+        case .idle, .unavailable, .failed, .holdHint: false
         }
     }
 
@@ -95,6 +97,17 @@ final class DictationViewModel {
         }
         await session.value
         watchdog.cancel()
+    }
+
+    /// Кнопку отпустили: идёт запись — дописываем последнюю фразу; запись ещё не началась
+    /// (разрешения, загрузка модели) — отменяем и подсказываем, что кнопку надо держать.
+    func release() async {
+        if state == .recording {
+            await finish()
+        } else if isActive {
+            cancel()
+            state = .holdHint
+        }
     }
 
     /// Пользователь сам правит поле: его правка важнее — расшифровку дальше не применяем.
@@ -163,12 +176,22 @@ struct DictationMessagePresentation: Sendable {
         case .unavailable(.languageNotSupported):
             title = "Dictation isn't available offline for your language."
             systemImage = "globe"
+        case .unavailable(.dictationDisabled):
+            // «Open Settings» тут не поможет: он открывает настройки приложения, а не клавиатуры.
+            title = "Dictation is turned off on this iPhone. Turn it on in Settings › General › Keyboard."
+            systemImage = "keyboard"
+        case .unavailable(.serviceUnavailable):
+            title = "Speech recognition isn't available right now. Please try again later."
+            systemImage = "waveform.slash"
         case .unavailable(.needsDownload):
             title = "Dictation needs a one-time download. Connect to the internet and try again."
             systemImage = "arrow.down.circle"
         case .failed:
             title = "Couldn't start dictation. Please try again."
             systemImage = "exclamationmark.triangle"
+        case .holdHint:
+            title = "Hold the microphone button while you speak."
+            systemImage = "hand.tap"
         case .idle, .preparing, .downloading, .recording:
             return nil
         }
