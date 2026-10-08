@@ -2,9 +2,18 @@ import SwiftUI
 
 @main
 struct AIChatApp: App {
+    @State private var container = AppContainer(
+        environment: AppContainer.environment(for: .processInfo)
+    )
+
     var body: some Scene {
         WindowGroup {
-            PlaceholderView()
+            switch container.environment {
+            case .live:
+                PlaceholderView()
+            case .unitTests:
+                EmptyView()
+            }
         }
     }
 }
