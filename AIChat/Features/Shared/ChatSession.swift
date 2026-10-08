@@ -19,6 +19,15 @@ protocol ChatSession: AnyObject {
     /// `nil` — в этом чате сейчас ничего не стримится.
     func draftUpdates(chatId: UUID) -> AsyncStream<StreamingDraft?>
 
+    /// Отправляет сообщение пользователя. Есть сеть — сообщение `sent` и ответ `streaming`
+    /// (генерацией владеет сервис); нет — сообщение `pending`.
+    /// - Parameter chatId: `nil` — новый чат: создаётся вместе с первым сообщением.
+    /// - Returns: id чата, в который ушло сообщение.
+    func send(_ text: String, inChat chatId: UUID?) async throws -> UUID
+
+    /// «Stop»: отменяет генерацию в чате; полученный текст сохраняется со статусом `cancelled`.
+    func stopGenerating(chatId: UUID)
+
     /// Удаляет чат и отменяет его генерацию, если она идёт.
     func deleteChat(id: UUID) async throws
 }
