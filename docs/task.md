@@ -71,7 +71,12 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 Все модели — `struct`/`enum`, `Sendable`, `Hashable`, в `Domain/Models/`.
 
 - `Chat`: `id` (UUID), `title`, `createdAt`, `updatedAt` (= время последнего
-  сообщения; обновляет репозиторий). В БД появляется только с первым сообщением.
+  сообщения; обновляет репозиторий), `folderId: UUID?` (`nil` — «Recents»;
+  FK `ON DELETE SET NULL`, миграция v2). В БД появляется только с первым сообщением.
+- `Folder`: `id` (UUID), `name`, `position` (ручной порядок, 0..n-1 без
+  пропусков, задаёт репозиторий), `createdAt`.
+- `SidebarSnapshot`: `folders` (секции `folder` + её `chats`, по `position`) и
+  `recents` (чаты без папки); чаты везде новые сверху.
 - `Message`: `id` (UUID), `chatId` (FK, `ON DELETE CASCADE`), `role`
   (`user`/`assistant`), `text`, `status`, `failure: MessageFailure?`, `createdAt`.
   Сортировка — `ORDER BY createdAt, rowid` (время может совпасть).
@@ -90,7 +95,7 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 - `ErrorKind`: `offline`, `rateLimited` (429), `unauthorized` (401 или нет ключа),
   `forbidden` (403, например регион), `server` (5xx), `unknown`.
 - `LLMError`: `kind: ErrorKind`, `retryAfter: Duration?` — то, что бросает `LLMProvider`.
-- Ошибки репозитория: `MessageNotFound(id)`, `ChatNotFound(id)`.
+- Ошибки репозитория: `MessageNotFound(id)`, `ChatNotFound(id)`, `FolderNotFound(id)`.
 
 ## Протоколы (`Domain/Protocols/`)
 
@@ -100,6 +105,10 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
   (нет сообщения → `MessageNotFound`), `history(chatId:before:limit:)`,
   `pendingMessages`, `claimPending(messageId:reply:) -> Bool`,
   `claimRetry(assistantMessageId:) -> Bool`, `markStreamingAsInterrupted`.
+  Папки: `observeSidebar() -> SidebarSnapshot`, `createFolder` (в конец),
+  `renameFolder`, `deleteFolder` (идемпотентно, чаты → «Recents»),
+  `moveFolder(id:to:)` (индекс зажимается), `moveChat(id:toFolder:)`
+  (`nil` — в «Recents», `updatedAt` не меняется).
 - `LLMProvider` — `displayName: LocalizedStringResource`,
   `streamReply(to: [LLMMessage]) -> AsyncThrowingStream<String, Error>`;
   отмена `Task` потребителя прерывает запрос, а цикл `for try await` при этом

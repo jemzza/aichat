@@ -394,7 +394,7 @@ struct ChatRepositoryContractTests {
         var snapshot = try await sidebar(repository) { $0.folders.count == 3 }
         #expect(snapshot.folderIds == [a, b, c])
         #expect(snapshot.positions == [0, 1, 2])
-        #expect(snapshot.folders.allSatisfy(\.chats.isEmpty))
+        #expect(snapshot.folders.allSatisfy { $0.chats.isEmpty })
 
         try await repository.moveFolder(id: c, to: 0)
         snapshot = try await sidebar(repository) { $0.folderIds.first == c }
@@ -533,8 +533,9 @@ struct ChatRepositoryContractTests {
     func insertChatIntoFolder(kind: RepositoryKind) async throws {
         let repository = kind.make()
         let folder = try await seedFolder(repository)
-        var chat = makeChat()
-        chat.folderId = folder
+        var draft = makeChat()
+        draft.folderId = folder
+        let chat = draft
 
         try await repository.insertChat(chat, firstMessage: userMessage(chat))
 
@@ -542,8 +543,9 @@ struct ChatRepositoryContractTests {
         #expect(snapshot.recents.isEmpty)
 
         let unknown = UUID()
-        var orphan = makeChat("Orphan")
-        orphan.folderId = unknown
+        var orphanDraft = makeChat("Orphan")
+        orphanDraft.folderId = unknown
+        let orphan = orphanDraft
         await #expect(throws: FolderNotFound(id: unknown)) {
             try await repository.insertChat(orphan, firstMessage: userMessage(orphan))
         }
