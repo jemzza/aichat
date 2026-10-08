@@ -3,13 +3,15 @@ import Testing
 @testable import AIChat
 
 /// Реализации `ChatRepository`, на которых гоняется один и тот же контракт.
-/// GRDB-реализация добавится сюда в шаге 1.4 — тесты менять не придётся.
+/// GRDB — на отдельной in-memory базе для каждого теста.
 enum RepositoryKind: String, CaseIterable, Sendable, CustomTestStringConvertible {
     case inMemory
+    case grdb
 
     func make() -> any ChatRepository {
         switch self {
         case .inMemory: InMemoryChatRepository()
+        case .grdb: GRDBChatRepository(database: try! AppDatabase.inMemory())
         }
     }
 
