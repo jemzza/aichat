@@ -237,3 +237,9 @@ _Сюда записываем, что пошло не так и что реши
   «Read aloud». На симуляторе iOS 26 `SpeechTranscriber.isAvailable == false` —
   путь `SpeechAnalyzer` и загрузка модели проверяемы только на устройстве;
   на симуляторе работает запасной `SFSpeechRecognizer`.
+  С выданными разрешениями симулятор iOS 18 показывает «Dictation isn't
+  available offline for your language»: у `SFSpeechRecognizer` на симуляторе
+  нет on-device моделей (`supportsOnDeviceRecognition == false`), а сеть по
+  решению «всё на устройстве» не используем. Значит, реальное распознавание
+  (оба пути) проверяется только на устройстве; на симуляторе проверено
+  состояние `languageNotSupported`.
