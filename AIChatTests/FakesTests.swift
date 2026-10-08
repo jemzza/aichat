@@ -45,16 +45,29 @@ struct FakeLLMProviderTests {
     }
 
     /// Отмена посреди ответа: уже полученный текст остаётся у потребителя.
+    /// Отменяем сразу после первого токена, а не по таймеру: под параллельной
+    /// нагрузкой таймер не гарантирует, что токен успел прийти.
     @Test func cancellationKeepsReceivedText() async {
         let provider = FakeLLMProvider(script: .reply("one two three four five", tokenDelay: .milliseconds(40)))
-        let task = Task { await collect(provider.streamReply(to: [])) }
+        let task = Task {
+            var text = ""
+            var error: (any Error)?
+            do {
+                for try await token in provider.streamReply(to: []) {
+                    text += token
+                    withUnsafeCurrentTask { $0?.cancel() }
+                }
+            } catch let caught {
+                error = caught
+            }
+            return (text, error, Task.isCancelled)
+        }
 
-        try? await Task.sleep(for: .milliseconds(100))
-        task.cancel()
-        let result = await task.value
+        let (text, error, wasCancelled) = await task.value
 
-        #expect(!result.text.isEmpty)
-        #expect(result.text != "one two three four five")
+        #expect(text == "one ")
+        #expect(error == nil)
+        #expect(wasCancelled)
     }
 }
 
