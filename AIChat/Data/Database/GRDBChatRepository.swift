@@ -12,6 +12,14 @@ final class GRDBChatRepository: ChatRepository {
         writer = database.writer
     }
 
+    /// Репозиторий для запуска приложения: ответы, которые стримились, когда процесс
+    /// умер, переводятся в `interrupted` раньше, чем кто-то подпишется на базу.
+    static func launch(database: AppDatabase) async throws -> GRDBChatRepository {
+        let repository = GRDBChatRepository(database: database)
+        try await repository.markStreamingAsInterrupted()
+        return repository
+    }
+
     // MARK: Наблюдение
 
     func observeChats() -> AsyncStream<[Chat]> {

@@ -17,8 +17,11 @@ struct AppDatabase: Sendable {
         let folder = try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )
-        let url = folder.appendingPathComponent(fileName, isDirectory: false)
-        return try AppDatabase(DatabasePool(path: url.path, configuration: makeConfiguration()))
+        return try onDisk(at: folder.appendingPathComponent(fileName, isDirectory: false))
+    }
+
+    static func onDisk(at url: URL) throws -> AppDatabase {
+        try AppDatabase(DatabasePool(path: url.path, configuration: makeConfiguration()))
     }
 
     /// Для тестов и превью: каждая база — отдельная, живёт, пока жив объект.
