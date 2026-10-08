@@ -1,8 +1,9 @@
 import AVFoundation
+import OSLog
 import Speech
 
-/// Диктовка на `SFSpeechRecognizer` — только on-device (`requiresOnDeviceRecognition`):
-/// язык без офлайн-распознавания не используем. Путь iOS 18 и запасной путь iOS 26.
+/// Диктовка на `SFSpeechRecognizer`: на устройстве, если язык это поддерживает; иначе,
+/// если есть сеть, — через серверы Apple. Путь iOS 18 и запасной путь iOS 26.
 @MainActor
 final class RecognizerSpeechTranscriber: SpeechTranscribing {
     private struct Session {
@@ -13,8 +14,13 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
         let continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation
     }
 
+    private let connectivity: any ConnectivityMonitoring
     private var session: Session?
     private var interruptions: Task<Void, Never>?
+
+    init(connectivity: any ConnectivityMonitoring) {
+        self.connectivity = connectivity
+    }
 
     func dictate() -> AsyncThrowingStream<DictationEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<DictationEvent, Error>.makeStream()
@@ -23,6 +29,7 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
             do {
                 try await self?.start(id: id, continuation: continuation)
             } catch {
+                DictationLog.logger.error("Recognizer: \(String(describing: error), privacy: .public)")
                 continuation.finish(throwing: error)
             }
         }
@@ -45,27 +52,21 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
 
         guard await Self.requestAuthorization() else { throw DictationUnavailability.recognitionDenied }
         guard await MicrophonePermission.request() else { throw DictationUnavailability.microphoneDenied }
-        guard let recognizer = Self.onDeviceRecognizer() else { throw DictationUnavailability.languageNotSupported }
+        let (recognizer, onDevice) = try Self.recognizer(isOnline: connectivity.isOnline)
         try Task.checkCancellation()
+        DictationLog.logger.info(
+            "Recognizer: \(recognizer.locale.identifier, privacy: .public), onDevice=\(onDevice, privacy: .public)"
+        )
 
         let request = SFSpeechAudioBufferRecognitionRequest()
-        request.requiresOnDeviceRecognition = true
+        request.requiresOnDeviceRecognition = onDevice
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
         request.taskHint = .dictation
 
-        let task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            // Обработчик зовётся не с главного потока: достаём значения здесь, дальше — Sendable.
-            let text = result?.bestTranscription.formattedString
-            let isFinal = result?.isFinal ?? false
-            if let text {
-                let transcript = isFinal ? Transcript(finalized: text) : Transcript(volatile: text)
-                continuation.yield(.transcript(transcript))
-            }
-            if isFinal || error != nil {
-                // Ошибка после «Готово» (тишина, нечего распознавать) — не ошибка для пользователя.
-                Task { @MainActor in self?.end(id: id) }
-            }
+        let task = Self.recognitionTask(recognizer: recognizer, request: request, continuation: continuation) {
+            [weak self] in
+            Task { @MainActor in self?.end(id: id) }
         }
 
         // `SFSpeechAudioBufferRecognitionRequest` не `Sendable`, но `append` документирован
@@ -114,17 +115,55 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
         }
     }
 
-    private static func onDeviceRecognizer() -> SFSpeechRecognizer? {
-        for locale in DictationLocales.candidates {
-            if let recognizer = SFSpeechRecognizer(locale: locale),
-               recognizer.supportsOnDeviceRecognition, recognizer.isAvailable {
-                return recognizer
-            }
+    /// Распознаватель для первого подходящего языка пользователя: сначала на устройстве,
+    /// затем (если есть сеть) — серверный.
+    private static func recognizer(isOnline: Bool) throws -> (SFSpeechRecognizer, onDevice: Bool) {
+        let recognizers = DictationLocales.candidates.compactMap { SFSpeechRecognizer(locale: $0) }
+        let summary = recognizers.map {
+            "\($0.locale.identifier) onDevice=\($0.supportsOnDeviceRecognition) available=\($0.isAvailable)"
         }
-        return nil
+        DictationLog.logger.info(
+            "Recognizers: \(summary.joined(separator: "; "), privacy: .public), online=\(isOnline, privacy: .public)"
+        )
+        if let local = recognizers.first(where: { $0.supportsOnDeviceRecognition }) {
+            return (local, true)
+        }
+        guard isOnline else { throw DictationUnavailability.languageNotSupported }
+        guard let remote = recognizers.first(where: \.isAvailable) else {
+            throw DictationUnavailability.serviceUnavailable
+        }
+        return (remote, false)
     }
 
-    private static func requestAuthorization() async -> Bool {
+    // MARK: Колбэки Speech — `nonisolated`
+
+    // Колбэки ниже система вызывает на своих очередях. Созданные внутри `@MainActor`-метода,
+    // они унаследовали бы изоляцию главного актора, и Swift 6 остановил бы приложение
+    // проверкой исполнителя. Поэтому они создаются в `nonisolated`-функциях и трогают
+    // только `Sendable`-значения.
+
+    private nonisolated static func recognitionTask(
+        recognizer: SFSpeechRecognizer,
+        request: SFSpeechAudioBufferRecognitionRequest,
+        continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation,
+        onEnd: @escaping @Sendable () -> Void
+    ) -> SFSpeechRecognitionTask {
+        recognizer.recognitionTask(with: request) { result, error in
+            let text = result?.bestTranscription.formattedString
+            let isFinal = result?.isFinal ?? false
+            if let text {
+                let transcript = isFinal ? Transcript(finalized: text) : Transcript(volatile: text)
+                continuation.yield(.transcript(transcript))
+            }
+            if let error {
+                // Ошибка после «отпустил» (тишина, нечего распознавать) — не ошибка для пользователя.
+                DictationLog.logger.info("Recognition ended: \(String(describing: error), privacy: .public)")
+            }
+            if isFinal || error != nil { onEnd() }
+        }
+    }
+
+    private nonisolated static func requestAuthorization() async -> Bool {
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized: return true
         case .denied, .restricted: return false
@@ -136,6 +175,11 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
             }
         }
     }
+}
+
+/// Журнал диктовки: какой путь выбран и почему не вышло. Текст речи сюда не пишем.
+enum DictationLog {
+    static let logger = Logger(subsystem: "com.example.aichat.app", category: "Dictation")
 }
 
 /// Первое событие, после которого запись надо остановить: прерывание аудиосессии

@@ -25,6 +25,8 @@ enum DictationUnavailability: Error, Hashable, Sendable {
     case languageNotSupported
     /// iOS 26: модели языка ещё нет, а скачать её сейчас нельзя (нет сети).
     case needsDownload
+    /// Офлайн-модели нет, сеть есть, но сервер распознавания Apple сейчас недоступен.
+    case serviceUnavailable
 }
 
 enum DictationEvent: Hashable, Sendable {

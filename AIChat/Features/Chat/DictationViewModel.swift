@@ -163,6 +163,9 @@ struct DictationMessagePresentation: Sendable {
         case .unavailable(.languageNotSupported):
             title = "Dictation isn't available offline for your language."
             systemImage = "globe"
+        case .unavailable(.serviceUnavailable):
+            title = "Speech recognition isn't available right now. Please try again later."
+            systemImage = "waveform.slash"
         case .unavailable(.needsDownload):
             title = "Dictation needs a one-time download. Connect to the internet and try again."
             systemImage = "arrow.down.circle"

@@ -22,9 +22,9 @@ final class AnalyzerSpeechTranscriber: SpeechTranscribing {
     private var usesFallback = false
     private var interruptions: Task<Void, Never>?
 
-    init(connectivity: any ConnectivityMonitoring, fallback: RecognizerSpeechTranscriber = RecognizerSpeechTranscriber()) {
+    init(connectivity: any ConnectivityMonitoring) {
         self.connectivity = connectivity
-        self.fallback = fallback
+        fallback = RecognizerSpeechTranscriber(connectivity: connectivity)
     }
 
     func dictate() -> AsyncThrowingStream<DictationEvent, Error> {
@@ -35,6 +35,7 @@ final class AnalyzerSpeechTranscriber: SpeechTranscribing {
                 try await self?.run(id: id, continuation: continuation)
                 continuation.finish()
             } catch {
+                DictationLog.logger.error("Analyzer: \(String(describing: error), privacy: .public)")
                 continuation.finish(throwing: error)
             }
         }
@@ -64,6 +65,7 @@ final class AnalyzerSpeechTranscriber: SpeechTranscribing {
         usesFallback = false
 
         guard let transcriber = try await readyTranscriber(continuation: continuation) else {
+            DictationLog.logger.info("Analyzer: no ready model, using SFSpeechRecognizer")
             usesFallback = true
             defer { usesFallback = false }
             for try await event in fallback.dictate() { continuation.yield(event) }
@@ -119,8 +121,12 @@ final class AnalyzerSpeechTranscriber: SpeechTranscribing {
         }
         guard let locale else { return nil }
         let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+        let status = await AssetInventory.status(forModules: [transcriber])
+        DictationLog.logger.info(
+            "Analyzer: \(locale.identifier, privacy: .public), assets=\(String(describing: status), privacy: .public)"
+        )
 
-        switch await AssetInventory.status(forModules: [transcriber]) {
+        switch status {
         case .installed:
             return transcriber
         case .unsupported:
