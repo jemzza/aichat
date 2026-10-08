@@ -9,3 +9,7 @@ struct MessageNotFound: Error, Hashable, Sendable {
 struct ChatNotFound: Error, Hashable, Sendable {
     let id: UUID
 }
+
+struct FolderNotFound: Error, Hashable, Sendable {
+    let id: UUID
+}

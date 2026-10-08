@@ -17,6 +17,7 @@ struct AppDatabaseTests {
         try database.writer.read { db in
             #expect(try db.tableExists("chat"))
             #expect(try db.tableExists("message"))
+            #expect(try db.tableExists("folder"))
             let foreignKeys = try db.foreignKeys(on: "message")
             #expect(foreignKeys.map(\.destinationTable) == ["chat"])
             #expect(try AppDatabase.migrator.hasCompletedMigrations(db))
@@ -27,7 +28,7 @@ struct AppDatabaseTests {
         let queue = try DatabaseQueue()
         _ = try AppDatabase(queue)
         _ = try AppDatabase(queue)
-        #expect(try queue.read { try AppDatabase.migrator.appliedIdentifiers($0) } == ["v1"])
+        #expect(try queue.read { try AppDatabase.migrator.appliedIdentifiers($0) } == ["v1", "v2"])
     }
 
     @Test func recordsRoundTripDomainModels() throws {
@@ -124,5 +125,98 @@ struct AppDatabaseTests {
 
         let ids = try database.writer.read { try ChatRecord.byLastActivity().fetchAll($0).map(\.id) }
         #expect(ids == [older.id, newer.id])
+    }
+
+    // MARK: Миграция v2 (папки)
+
+    @Test func migrationV1ToV2KeepsData() async throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue, upTo: "v1")
+
+        // Записи уже знают о `folderId`, поэтому данные v1 кладём сырым SQL.
+        let chatA = makeChat(at: 0)
+        let chatB = makeChat(at: 10)
+        let stored = [
+            Message(chatId: chatA.id, role: .user, text: "Hi", status: .sent, createdAt: t0),
+            Message(chatId: chatA.id, role: .assistant, text: "partial", status: .failed,
+                    failure: MessageFailure(kind: .rateLimited, retryAt: t0.addingTimeInterval(60)),
+                    createdAt: t0.addingTimeInterval(1)),
+            Message(chatId: chatB.id, role: .user, text: "Later", status: .pending,
+                    createdAt: t0.addingTimeInterval(10)),
+        ]
+        try await queue.write { db in
+            for chat in [chatA, chatB] {
+                try db.execute(
+                    sql: "INSERT INTO chat (id, title, createdAt, updatedAt) VALUES (?, ?, ?, ?)",
+                    arguments: [chat.id, chat.title, chat.createdAt.databaseTimestamp, chat.updatedAt.databaseTimestamp]
+                )
+            }
+            for message in stored {
+                try db.execute(
+                    sql: """
+                        INSERT INTO message (id, chatId, role, text, status, failureKind, failureRetryAt, createdAt)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [message.id, message.chatId, message.role.rawValue, message.text,
+                                message.status.rawValue, message.failure?.kind.rawValue,
+                                message.failure?.retryAt?.databaseTimestamp, message.createdAt.databaseTimestamp]
+                )
+            }
+        }
+
+        let database = try AppDatabase(queue)
+
+        try await queue.read { db in
+            #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2"])
+            #expect(try ChatRecord.byLastActivity().fetchAll(db).map(\.chat) == [chatB, chatA])
+            #expect(try MessageRecord.chronological().fetchAll(db).map { try $0.message() } == stored)
+            #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM chat WHERE folderId IS NOT NULL") == 0)
+            #expect(try FolderRecord.fetchCount(db) == 0)
+            let foreignKey = try Row.fetchOne(db, sql: "SELECT * FROM pragma_foreign_key_list('chat')")
+            #expect(foreignKey?["table"] == "folder")
+            #expect(foreignKey?["from"] == "folderId")
+            #expect(foreignKey?["on_delete"] == "SET NULL")
+        }
+
+        // После миграции папки работают и со старыми чатами.
+        let repository = GRDBChatRepository(database: database)
+        let folder = UUID()
+        try await repository.createFolder(id: folder, name: "Old chats", createdAt: t0)
+        try await repository.moveChat(id: chatA.id, toFolder: folder)
+        let snapshot = try await firstValue(of: repository.observeSidebar()) { $0.recents.count == 1 }
+        #expect(snapshot.folders.first?.chats.map(\.id) == [chatA.id])
+        #expect(snapshot.recents.map(\.id) == [chatB.id])
+    }
+
+    @Test func deletingFolderSetsChatFolderToNull() throws {
+        let database = try AppDatabase.inMemory()
+        let folder = Folder(id: UUID(), name: "Folder", position: 0, createdAt: t0)
+        var chat = makeChat()
+        chat.folderId = folder.id
+        try database.writer.write { db in
+            try FolderRecord(folder).insert(db)
+            try ChatRecord(chat).insert(db)
+            try MessageRecord(Message(chatId: chat.id, role: .user, text: "a", status: .sent, createdAt: t0)).insert(db)
+        }
+
+        let deleted = try database.writer.write { try FolderRecord.deleteOne($0, key: folder.id) }
+
+        #expect(deleted)
+        let (chats, messageCount) = try database.writer.read { db in
+            (try ChatRecord.fetchAll(db).map(\.chat), try MessageRecord.fetchCount(db))
+        }
+        chat.folderId = nil
+        #expect(chats == [chat])
+        #expect(messageCount == 1)
+    }
+
+    @Test func chatWithUnknownFolderViolatesForeignKey() throws {
+        let database = try AppDatabase.inMemory()
+        var chat = makeChat()
+        chat.folderId = UUID()
+        let orphan = chat
+        #expect(throws: DatabaseError.self) {
+            try database.writer.write { try ChatRecord(orphan).insert($0) }
+        }
     }
 }

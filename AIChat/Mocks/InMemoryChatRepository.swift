@@ -18,13 +18,33 @@ final class InMemoryChatRepository: ChatRepository {
 
     private struct State {
         var chats: [UUID: Chat] = [:]
+        var folders: [UUID: Folder] = [:]
         var messages: [UUID: StoredMessage] = [:]
         var nextSequence = 0
         var chatObservers: [UUID: AsyncStream<[Chat]>.Continuation] = [:]
+        var sidebarObservers: [UUID: AsyncStream<SidebarSnapshot>.Continuation] = [:]
         var messageObservers: [UUID: MessageObserver] = [:]
 
         var sortedChats: [Chat] {
             chats.values.sorted { ($0.updatedAt, $0.createdAt) > ($1.updatedAt, $1.createdAt) }
+        }
+
+        var sortedFolders: [Folder] {
+            folders.values.sorted { $0.position < $1.position }
+        }
+
+        var sidebar: SidebarSnapshot {
+            SidebarSnapshot(folders: sortedFolders, chats: sortedChats)
+        }
+
+        func requireFolder(_ folderId: UUID?) throws {
+            guard let folderId else { return }
+            guard folders[folderId] != nil else { throw FolderNotFound(id: folderId) }
+        }
+
+        /// Позиции 0..n-1 в порядке `ids`.
+        mutating func renumberFolders(_ ids: [UUID]) {
+            for (position, id) in ids.enumerated() { folders[id]?.position = position }
         }
 
         func sortedMessages(chatId: UUID) -> [Message] {
@@ -45,10 +65,14 @@ final class InMemoryChatRepository: ChatRepository {
 
         /// Рассылает свежие снимки. `yield` потокобезопасен и не вызывает код подписчика синхронно,
         /// поэтому его можно звать под замком.
-        func notify(chatIds: Set<UUID>, chatsChanged: Bool) {
+        func notify(chatIds: Set<UUID>, chatsChanged: Bool, foldersChanged: Bool = false) {
             if chatsChanged {
                 let snapshot = sortedChats
                 for continuation in chatObservers.values { continuation.yield(snapshot) }
+            }
+            if chatsChanged || foldersChanged {
+                let snapshot = sidebar
+                for continuation in sidebarObservers.values { continuation.yield(snapshot) }
             }
             for observer in messageObservers.values where chatIds.contains(observer.chatId) {
                 observer.continuation.yield(sortedMessages(chatId: observer.chatId))
@@ -80,6 +104,19 @@ final class InMemoryChatRepository: ChatRepository {
         }
     }
 
+    func observeSidebar() -> AsyncStream<SidebarSnapshot> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let id = UUID()
+            state.withLock { state in
+                state.sidebarObservers[id] = continuation
+                continuation.yield(state.sidebar)
+            }
+            continuation.onTermination = { [weak self] _ in
+                self?.state.withLock { _ = $0.sidebarObservers.removeValue(forKey: id) }
+            }
+        }
+    }
+
     func observeMessages(chatId: UUID) -> AsyncStream<[Message]> {
         AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let id = UUID()
@@ -97,7 +134,8 @@ final class InMemoryChatRepository: ChatRepository {
 
     func insertChat(_ chat: Chat, firstMessage: Message) throws {
         guard firstMessage.chatId == chat.id else { throw ChatNotFound(id: firstMessage.chatId) }
-        state.withLock { state in
+        try state.withLock { state in
+            try state.requireFolder(chat.folderId)
             var chat = chat
             chat.updatedAt = firstMessage.createdAt
             state.chats[chat.id] = chat
@@ -120,6 +158,55 @@ final class InMemoryChatRepository: ChatRepository {
             guard state.chats.removeValue(forKey: id) != nil else { return }
             state.messages = state.messages.filter { $0.value.message.chatId != id }
             state.notify(chatIds: [id], chatsChanged: true)
+        }
+    }
+
+    func moveChat(id: UUID, toFolder folderId: UUID?) throws {
+        try state.withLock { state in
+            guard state.chats[id] != nil else { throw ChatNotFound(id: id) }
+            try state.requireFolder(folderId)
+            state.chats[id]?.folderId = folderId
+            state.notify(chatIds: [], chatsChanged: true)
+        }
+    }
+
+    // MARK: Папки
+
+    func createFolder(id: UUID, name: String, createdAt: Date) {
+        state.withLock { state in
+            state.folders[id] = Folder(id: id, name: name, position: state.folders.count, createdAt: createdAt)
+            state.notify(chatIds: [], chatsChanged: false, foldersChanged: true)
+        }
+    }
+
+    func renameFolder(id: UUID, name: String) throws {
+        try state.withLock { state in
+            guard state.folders[id] != nil else { throw FolderNotFound(id: id) }
+            state.folders[id]?.name = name
+            state.notify(chatIds: [], chatsChanged: false, foldersChanged: true)
+        }
+    }
+
+    func deleteFolder(id: UUID) {
+        state.withLock { state in
+            guard state.folders.removeValue(forKey: id) != nil else { return }
+            // Аналог `ON DELETE SET NULL` в GRDB-реализации.
+            for (chatId, chat) in state.chats where chat.folderId == id {
+                state.chats[chatId]?.folderId = nil
+            }
+            state.renumberFolders(state.sortedFolders.map(\.id))
+            state.notify(chatIds: [], chatsChanged: true, foldersChanged: true)
+        }
+    }
+
+    func moveFolder(id: UUID, to index: Int) throws {
+        try state.withLock { state in
+            var ids = state.sortedFolders.map(\.id)
+            guard let current = ids.firstIndex(of: id) else { throw FolderNotFound(id: id) }
+            ids.remove(at: current)
+            ids.insert(id, at: min(max(index, 0), ids.count))
+            state.renumberFolders(ids)
+            state.notify(chatIds: [], chatsChanged: false, foldersChanged: true)
         }
     }
 

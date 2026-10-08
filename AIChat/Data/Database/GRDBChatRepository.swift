@@ -28,6 +28,16 @@ final class GRDBChatRepository: ChatRepository {
         }
     }
 
+    func observeSidebar() -> AsyncStream<SidebarSnapshot> {
+        observe { db in
+            // Одно чтение — согласованный снимок папок и чатов.
+            SidebarSnapshot(
+                folders: try FolderRecord.ordered().fetchAll(db).map(\.folder),
+                chats: try ChatRecord.byLastActivity().fetchAll(db).map(\.chat)
+            )
+        }
+    }
+
     func observeMessages(chatId: UUID) -> AsyncStream<[Message]> {
         observe { db in
             try MessageRecord.chronological()
@@ -62,6 +72,7 @@ final class GRDBChatRepository: ChatRepository {
         var record = ChatRecord(chat)
         record.updatedAt = firstMessage.createdAt
         try await writer.write { [record] db in
+            try Self.requireFolder(record.folderId, db)
             try record.insert(db)
             try MessageRecord(firstMessage).insert(db)
         }
@@ -78,6 +89,49 @@ final class GRDBChatRepository: ChatRepository {
         // Сообщения удаляет `ON DELETE CASCADE`.
         _ = try await writer.write { db in
             try ChatRecord.deleteOne(db, key: id)
+        }
+    }
+
+    func moveChat(id: UUID, toFolder folderId: UUID?) async throws {
+        try await writer.write { db in
+            guard try ChatRecord.exists(db, key: id) else { throw ChatNotFound(id: id) }
+            // Проверяем сами, а не ждём ошибку FK, — наружу уходит доменная ошибка.
+            try Self.requireFolder(folderId, db)
+            try ChatRecord.filter(key: id).updateAll(db, ChatRecord.Columns.folderId.set(to: folderId))
+        }
+    }
+
+    // MARK: Папки
+
+    func createFolder(id: UUID, name: String, createdAt: Date) async throws {
+        try await writer.write { db in
+            let count = try FolderRecord.fetchCount(db)
+            try FolderRecord(id: id, name: name, position: count, createdAt: createdAt).insert(db)
+        }
+    }
+
+    func renameFolder(id: UUID, name: String) async throws {
+        let changed = try await writer.write { db in
+            try FolderRecord.filter(key: id).updateAll(db, FolderRecord.Columns.name.set(to: name))
+        }
+        guard changed > 0 else { throw FolderNotFound(id: id) }
+    }
+
+    func deleteFolder(id: UUID) async throws {
+        try await writer.write { db in
+            // Чаты возвращает в «Recents» `ON DELETE SET NULL`.
+            guard try FolderRecord.deleteOne(db, key: id) else { return }
+            try Self.renumberFolders(try FolderRecord.ordered().fetchAll(db).map(\.id), db)
+        }
+    }
+
+    func moveFolder(id: UUID, to index: Int) async throws {
+        try await writer.write { db in
+            var ids = try FolderRecord.ordered().fetchAll(db).map(\.id)
+            guard let current = ids.firstIndex(of: id) else { throw FolderNotFound(id: id) }
+            ids.remove(at: current)
+            ids.insert(id, at: min(max(index, 0), ids.count))
+            try Self.renumberFolders(ids, db)
         }
     }
 
@@ -171,6 +225,20 @@ final class GRDBChatRepository: ChatRepository {
     }
 
     // MARK: Внутреннее
+
+    /// `nil` — «Recents», проверять нечего.
+    private static func requireFolder(_ folderId: UUID?, _ db: Database) throws {
+        guard let folderId else { return }
+        guard try FolderRecord.exists(db, key: folderId) else { throw FolderNotFound(id: folderId) }
+    }
+
+    /// Позиции 0..n-1 в порядке `ids`; пишем только изменившиеся.
+    private static func renumberFolders(_ ids: [UUID], _ db: Database) throws {
+        let current = Dictionary(uniqueKeysWithValues: try FolderRecord.fetchAll(db).map { ($0.id, $0.position) })
+        for (position, id) in ids.enumerated() where current[id] != position {
+            try FolderRecord.filter(key: id).updateAll(db, FolderRecord.Columns.position.set(to: position))
+        }
+    }
 
     /// Вставляет сообщение и сдвигает `updatedAt` чата вперёд (назад — никогда).
     private static func append(_ message: Message, _ db: Database) throws {

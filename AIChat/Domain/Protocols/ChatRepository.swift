@@ -5,8 +5,10 @@ protocol ChatRepository: Sendable {
     // MARK: Наблюдение
     // Первое значение приходит сразу, дальше — при каждом изменении.
 
-    /// Чаты, новые (по `updatedAt`) сверху.
+    /// Все чаты (в том числе лежащие в папках), новые (по `updatedAt`) сверху.
     func observeChats() -> AsyncStream<[Chat]>
+    /// Папки по `position` с их чатами + чаты без папки («Recents»); внутри секций — новые сверху.
+    func observeSidebar() -> AsyncStream<SidebarSnapshot>
     /// Сообщения чата по `createdAt`, при равенстве — по порядку вставки.
     func observeMessages(chatId: UUID) -> AsyncStream<[Message]>
 
@@ -14,11 +16,29 @@ protocol ChatRepository: Sendable {
 
     /// Создаёт чат вместе с первым сообщением в одной транзакции —
     /// пустых чатов в хранилище не бывает. `updatedAt` чата = `firstMessage.createdAt`.
+    /// - Throws: `FolderNotFound`, если `chat.folderId` указывает на несуществующую папку.
     func insertChat(_ chat: Chat, firstMessage: Message) async throws
     /// - Throws: `ChatNotFound`.
     func renameChat(id: UUID, title: String) async throws
     /// Удаляет чат и каскадом его сообщения. Отсутствующий чат — не ошибка.
     func deleteChat(id: UUID) async throws
+    /// Переносит чат в папку; `folderId == nil` — в «Recents». `updatedAt` не меняется.
+    /// - Throws: `ChatNotFound`, `FolderNotFound` (чат при этом остаётся где был).
+    func moveChat(id: UUID, toFolder folderId: UUID?) async throws
+
+    // MARK: Папки
+
+    /// Новая папка в конце списка. Имя не проверяется — это забота ViewModel.
+    func createFolder(id: UUID, name: String, createdAt: Date) async throws
+    /// - Throws: `FolderNotFound`.
+    func renameFolder(id: UUID, name: String) async throws
+    /// Удаляет папку; её чаты возвращаются в «Recents», позиции остальных папок уплотняются.
+    /// Отсутствующая папка — не ошибка.
+    func deleteFolder(id: UUID) async throws
+    /// Ставит папку на место `index` в итоговом списке (зажимается в `0..<count`),
+    /// остальные сдвигаются.
+    /// - Throws: `FolderNotFound`.
+    func moveFolder(id: UUID, to index: Int) async throws
 
     // MARK: Сообщения
 
