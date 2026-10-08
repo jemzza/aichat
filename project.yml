@@ -78,12 +78,27 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.aichat.tests
         GENERATE_INFOPLIST_FILE: YES
 
+  # UI-тесты: сценарии через настоящие алерты и меню (`-mockData`).
+  AIChatUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: AIChatUITests
+    dependencies:
+      - target: AIChat
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.aichat.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   AIChat:
     build:
       targets:
         AIChat: all
         AIChatTests: [test]
+        AIChatUITests: [test]
     test:
       targets:
         - AIChatTests
+        - AIChatUITests
