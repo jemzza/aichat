@@ -1,4 +1,5 @@
 import Foundation
+import Speech
 
 /// Какие реализации собрать. По умолчанию — только реальные; каждый фейк включается
 /// только своим DEBUG launch-аргументом (в Release `LaunchOptions` всегда `.none`).
@@ -26,14 +27,23 @@ struct DependencyPlan: Hashable, Sendable {
         case slowStream
     }
 
+    enum Dictation: Hashable, Sendable {
+        /// `SpeechAnalyzer` (iOS 26) или `SFSpeechRecognizer` (iOS 18).
+        case system
+        /// `-mockDictation`: фейк без микрофона.
+        case scripted
+    }
+
     let storage: Storage
     let network: Network
     let model: Model
+    let dictation: Dictation
 
-    init(storage: Storage, network: Network, model: Model) {
+    init(storage: Storage, network: Network, model: Model, dictation: Dictation = .system) {
         self.storage = storage
         self.network = network
         self.model = model
+        self.dictation = dictation
     }
 
     init(options: LaunchOptions) {
@@ -44,6 +54,7 @@ struct DependencyPlan: Hashable, Sendable {
         } else {
             model = options.slowStream ? .slowStream : .groq
         }
+        dictation = options.mockDictation ? .scripted : .system
     }
 }
 
@@ -67,6 +78,7 @@ extension AppContainer {
             session: service,
             connectivity: connectivity,
             speech: SystemSpeechSynthesizer(),
+            transcriber: makeTranscriber(plan.dictation, connectivity: connectivity),
             modelName: provider.displayName
         )
         return (dependencies, service)
@@ -118,7 +130,23 @@ extension AppContainer {
         }
     }
 
+    private func makeTranscriber(
+        _ dictation: DependencyPlan.Dictation,
+        connectivity: any ConnectivityMonitoring
+    ) -> any SpeechTranscribing {
+        #if DEBUG
+        if dictation == .scripted { return FakeSpeechTranscriber(script: .phrase(Self.dictationPhrase)) }
+        #endif
+        if #available(iOS 26, *), SpeechTranscriber.isAvailable {
+            return AnalyzerSpeechTranscriber(connectivity: connectivity)
+        }
+        return RecognizerSpeechTranscriber()
+    }
+
     #if DEBUG
+    /// Фраза фейковой диктовки (`-mockDictation`) — «речь» пользователя, не строка интерфейса.
+    private static let dictationPhrase = "What is the difference between a struct and a class in Swift"
+
     /// Ответ фейка для `-mockSlowStream` (содержимое переписки, не строка интерфейса).
     private static let slowStreamReply = """
         ## Slow stream

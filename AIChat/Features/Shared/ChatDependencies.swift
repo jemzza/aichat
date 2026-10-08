@@ -9,6 +9,8 @@ struct ChatDependencies {
     let connectivity: any ConnectivityMonitoring
     /// Озвучка ответов («Read aloud»).
     let speech: any SpeechSynthesizing
+    /// Диктовка в поле ввода.
+    let transcriber: any SpeechTranscribing
     /// Подпись под названием чата («Groq · <model>»).
     let modelName: LocalizedStringResource
 }

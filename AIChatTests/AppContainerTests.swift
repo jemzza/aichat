@@ -59,6 +59,12 @@ struct DependencyPlanTests {
         #expect(plan.storage == .disk)
         #expect(plan.network == .system)
         #expect(plan.model == .groq)
+        #expect(plan.dictation == .system)
+    }
+
+    @Test func mockDictationSwitchesOnlyDictation() {
+        #expect(DependencyPlan(options: LaunchOptions(arguments: ["app", "-mockDictation"]))
+                == DependencyPlan(storage: .disk, network: .system, model: .groq, dictation: .scripted))
     }
 
     @Test func eachFlagSwitchesOnlyItsPart() {

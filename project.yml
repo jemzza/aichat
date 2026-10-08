@@ -39,6 +39,8 @@ targets:
       properties:
         CFBundleDisplayName: AI Chat
         UILaunchScreen: {}
+        NSMicrophoneUsageDescription: Dictation uses the microphone to turn your speech into text. Audio is processed on this device and never saved.
+        NSSpeechRecognitionUsageDescription: Dictation recognizes your speech on this device to type your message.
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:

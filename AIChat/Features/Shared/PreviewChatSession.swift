@@ -169,6 +169,7 @@ extension ChatDependencies {
             session: PreviewChatSession(repository: repository, connectivity: connectivity),
             connectivity: connectivity,
             speech: FakeSpeechSynthesizer(),
+            transcriber: FakeSpeechTranscriber(),
             modelName: "Groq · gpt-oss-120b"
         )
     }

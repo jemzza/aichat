@@ -6,12 +6,14 @@ import Foundation
 /// - `-mockData` — репозиторий в памяти с `PreviewData`;
 /// - `-mockOffline` — сеть всегда «нет»;
 /// - `-mockError 429|401|403|500|offline` — LLM отвечает этой ошибкой;
-/// - `-mockSlowStream` — LLM-фейк с медленным стримингом.
+/// - `-mockSlowStream` — LLM-фейк с медленным стримингом;
+/// - `-mockDictation` — диктовка без микрофона: фейк «надиктовывает» фразу по словам.
 struct LaunchOptions: Hashable, Sendable {
     var useMockData = false
     var forceOffline = false
     var mockError: ErrorKind?
     var slowStream = false
+    var mockDictation = false
 
     static let none = LaunchOptions()
 
@@ -24,6 +26,7 @@ struct LaunchOptions: Hashable, Sendable {
         useMockData = arguments.contains("-mockData")
         forceOffline = arguments.contains("-mockOffline")
         slowStream = arguments.contains("-mockSlowStream")
+        mockDictation = arguments.contains("-mockDictation")
         if let index = arguments.firstIndex(of: "-mockError") {
             let value = arguments.index(after: index) < arguments.endIndex ? arguments[index + 1] : ""
             mockError = Self.errorKind(for: value)
