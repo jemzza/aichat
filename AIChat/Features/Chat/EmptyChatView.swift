@@ -7,7 +7,17 @@ struct EmptyChatView: View {
     let onSelect: (Suggestion) -> Void
 
     var body: some View {
-        ScrollView {
+        // Короткий контент — по центру экрана; длинный (крупный шрифт) — прокручивается с начала.
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    private var content: some View {
             VStack(spacing: 28) {
                 Text(greeting.title)
                     .textStyle(.greeting)
@@ -24,11 +34,6 @@ struct EmptyChatView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 32)
             .frame(maxWidth: 520)
-            .frame(maxWidth: .infinity)
-        }
-        // Короткий контент — по центру экрана, длинный (крупный шрифт) — прокручивается.
-        .scrollBounceBehavior(.basedOnSize)
-        .defaultScrollAnchor(.center)
     }
 }
 

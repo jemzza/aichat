@@ -52,6 +52,8 @@ struct ChatView: View {
                     viewModel.scrollToBottomTapped()
                     withAnimation(.snappy) { position.scrollTo(edge: .bottom) }
                 }
+                // Плавающая кнопка поверх текста: растёт, но не закрывает пол-экрана.
+                .dynamicTypeSize(...DynamicTypeSize.accessibility2)
                 .padding(.bottom, 12)
                 .transition(.scale(scale: 0.6).combined(with: .opacity))
             }

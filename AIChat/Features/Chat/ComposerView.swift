@@ -25,6 +25,9 @@ struct ComposerView: View {
             HStack {
                 Spacer()
                 actionButton
+                    // Кнопка растёт с текстом, но не до размеров, съедающих поле ввода.
+                    // На месте вызова: `@ScaledMetric` кнопки читает окружение родителя.
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility1)
             }
         }
         .padding(10)
@@ -37,6 +40,8 @@ struct ComposerView: View {
         .padding(.horizontal, 12)
         .padding(.top, 4)
         .padding(.bottom, 8)
+        // Непрозрачно на всю ширину: лента не должна просвечивать вокруг карточки.
+        .background(.appBackground)
         .sensoryFeedback(.impact(weight: .medium), trigger: sendCount)
         .sensoryFeedback(.impact(weight: .light), trigger: stopCount)
     }

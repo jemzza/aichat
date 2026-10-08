@@ -40,6 +40,8 @@ struct ChatTopBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        // Как у системных навбаров: панель не растёт бесконечно, иначе съедает экран.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .background(.appBackground)
     }
 

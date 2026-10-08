@@ -5,6 +5,7 @@ import SwiftUI
 /// Алерты переименования/удаления вешает `RootView`: они общие с верхней панелью.
 struct SidebarView: View {
     @Bindable var viewModel: ChatListViewModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// Вызывается после выбора чата или «New chat» — iPhone закрывает панель.
     var onNavigate: () -> Void = {}
 
@@ -88,7 +89,7 @@ struct SidebarView: View {
         } label: {
             // Название чата — пользовательские данные, а не строка интерфейса.
             Text(chat.title)
-                .lineLimit(1)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
                 .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)

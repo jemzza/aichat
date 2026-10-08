@@ -79,11 +79,16 @@ private struct AssistantMessage: View {
         case .done:
             ActionIcons(message: message, actions: actions, showsRetry: false)
         case .cancelled:
-            HStack(spacing: 12) {
-                Label("Stopped", systemImage: "stop.circle")
-                    .textStyle(.caption)
-                    .foregroundStyle(.secondary)
-                ActionIcons(message: message, actions: actions, showsRetry: true)
+            // При крупном шрифте подпись и иконки не помещаются в строку — переносим.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    stoppedLabel
+                    ActionIcons(message: message, actions: actions, showsRetry: true, alignsToTextEdge: false)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    stoppedLabel
+                    ActionIcons(message: message, actions: actions, showsRetry: true)
+                }
             }
         case .failed, .interrupted:
             if let presentation = MessageErrorPresentation.forMessage(message) {
@@ -95,6 +100,13 @@ private struct AssistantMessage: View {
         case .pending, .sent:
             EmptyView()
         }
+    }
+
+    private var stoppedLabel: some View {
+        Label("Stopped", systemImage: "stop.circle")
+            .textStyle(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize()
     }
 }
 
@@ -127,6 +139,8 @@ private struct ActionIcons: View {
     let message: Message
     let actions: MessageActions
     let showsRetry: Bool
+    /// Первый в строке — сдвигаем, чтобы иконка стояла вровень с текстом ответа.
+    var alignsToTextEdge = true
 
     var body: some View {
         HStack(spacing: 4) {
@@ -145,7 +159,9 @@ private struct ActionIcons: View {
             }
         }
         // Кнопки 44pt, а иконки должны стоять вровень с текстом ответа.
-        .padding(.leading, -12)
+        .padding(.leading, alignsToTextEdge ? -12 : 0)
+        // Иконки растут с текстом, но не настолько, чтобы закрывать ответ.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
     }
 }
 
@@ -186,6 +202,8 @@ private struct ErrorBanner: View {
                 }
             }
         }
+        // Во вертикальной раскладке (узкий экран, крупный шрифт) плашка всё равно на всю ширину.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(.appSurface, in: .rect(cornerRadius: 14))
         .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(.secondary.opacity(0.2)) }

@@ -12,6 +12,8 @@ struct OfflineBanner: View {
             .overlay { Capsule().strokeBorder(.secondary.opacity(0.2)) }
             .padding(.bottom, 6)
             .frame(maxWidth: .infinity)
+            // Элемент «хрома», как верхняя панель: не растёт до размеров, съедающих экран.
+            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 }
 
