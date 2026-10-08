@@ -120,7 +120,7 @@ iOS 18 и iOS 26.
 
 Решения — раздел «Голос (бонус)» и таблица «Решения» в `docs/task.md`.
 
-- [ ] 7.A Озвучка ответов: протокол `SpeechSynthesizing` (состояние
+- [x] 7.A Озвучка ответов: протокол `SpeechSynthesizing` (состояние
       «какое сообщение читается» — `playbackUpdates()`), очистка Markdown для
       чтения, выбор голоса по языку (`NLLanguageRecognizer`),
       `SystemSpeechSynthesizer` на `AVSpeechSynthesizer`, иконка под ответом.

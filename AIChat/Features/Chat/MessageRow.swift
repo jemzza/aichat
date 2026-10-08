@@ -4,7 +4,10 @@ import SwiftUI
 struct MessageActions {
     var canRetry = false
     var isCopied = false
+    var canReadAloud = false
+    var isReadingAloud = false
     var copy: () -> Void = {}
+    var toggleReadAloud: () -> Void = {}
     var retry: () -> Void = {}
     /// Копирование блока кода из ответа.
     var copyText: (String) -> Void = { _ in }
@@ -164,7 +167,7 @@ private struct GeneratingIndicator: View {
     }
 }
 
-/// Маленькие иконки под ответом: копировать и (для остановленного) повторить.
+/// Маленькие иконки под ответом: копировать, озвучить и (для остановленного) повторить.
 private struct ActionIcons: View {
     let message: Message
     let actions: MessageActions
@@ -183,6 +186,14 @@ private struct ActionIcons: View {
                 )
                 .contentTransition(.symbolEffect(.replace))
                 .sensoryFeedback(.success, trigger: actions.isCopied) { _, isCopied in isCopied }
+            }
+            if actions.canReadAloud || actions.isReadingAloud {
+                IconButton(
+                    title: actions.isReadingAloud ? "Stop reading" : "Read aloud",
+                    systemImage: actions.isReadingAloud ? "stop.fill" : "speaker.wave.2",
+                    action: actions.toggleReadAloud
+                )
+                .contentTransition(.symbolEffect(.replace))
             }
             if showsRetry {
                 IconButton(title: retryTitle, systemImage: "arrow.clockwise", action: actions.retry)

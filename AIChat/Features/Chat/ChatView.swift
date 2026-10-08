@@ -81,6 +81,7 @@ struct ChatView: View {
         .background(.appBackground)
         .task(id: viewModel.chatId) { await viewModel.observeMessages() }
         .task(id: viewModel.chatId) { await viewModel.observeDraft() }
+        .task { await viewModel.observeSpeech() }
         .alert("Message not sent", isPresented: sendFailedBinding) {
             Button("OK", role: .cancel) { viewModel.dismissSendFailure() }
         } message: {
@@ -101,7 +102,10 @@ struct ChatView: View {
         MessageActions(
             canRetry: viewModel.canRetry(message),
             isCopied: viewModel.copiedMessageId == message.id,
+            canReadAloud: viewModel.canReadAloud(message),
+            isReadingAloud: viewModel.speakingMessageId == message.id,
             copy: { viewModel.copy(message) },
+            toggleReadAloud: { viewModel.toggleReadAloud(message) },
             retry: { Task { await viewModel.retry(message) } },
             copyText: { viewModel.copyText($0) }
         )
@@ -145,7 +149,8 @@ private struct ChatViewPreview: View {
         let dependencies = ChatDependencies.preview()
         _viewModel = State(initialValue: ChatViewModel(chatId: chat.id,
                                                        repository: dependencies.repository,
-                                                       session: dependencies.session))
+                                                       session: dependencies.session,
+                                                       speech: dependencies.speech))
     }
 
     var body: some View {

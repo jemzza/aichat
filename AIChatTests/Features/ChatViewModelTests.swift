@@ -327,5 +327,59 @@ struct ChatViewModelTests {
         await viewModel.retry(latest)
         #expect(session.retriedMessageIds == [latest.id])
     }
+
+    // MARK: Озвучка
+
+    @Test func readAloudSpeaksCleanTextAndTracksPlayback() async throws {
+        let reply = Message(chatId: chat.id, role: .assistant, text: "## Title\n```\ncode\n```", status: .done,
+                            createdAt: .now)
+        let repository = InMemoryChatRepository(chats: [chat], messages: [reply])
+        let speech = FakeSpeechSynthesizer()
+        let viewModel = ChatViewModel(chatId: chat.id, repository: repository, session: ManualChatSession(),
+                                      speech: speech)
+        let messagesTask = Task { await viewModel.observeMessages() }
+        let speechTask = Task { await viewModel.observeSpeech() }
+        defer { messagesTask.cancel(); speechTask.cancel() }
+        try await waitUntil { viewModel.hasLoaded }
+
+        #expect(viewModel.canReadAloud(reply))
+        viewModel.toggleReadAloud(reply)
+        #expect(speech.spoken.map(\.text) == ["Title."])
+        try await waitUntil { viewModel.speakingMessageId == reply.id }
+
+        speech.finish()
+        try await waitUntil { viewModel.speakingMessageId == nil }
+    }
+
+    @Test func secondTapStopsReading() async throws {
+        let reply = Message(chatId: chat.id, role: .assistant, text: "Hello", status: .done, createdAt: .now)
+        let speech = FakeSpeechSynthesizer()
+        let viewModel = ChatViewModel(chatId: chat.id, repository: InMemoryChatRepository(),
+                                      session: ManualChatSession(), speech: speech)
+        let speechTask = Task { await viewModel.observeSpeech() }
+        defer { speechTask.cancel() }
+
+        viewModel.toggleReadAloud(reply)
+        try await waitUntil { viewModel.speakingMessageId == reply.id }
+        viewModel.toggleReadAloud(reply)
+
+        #expect(speech.stopCount == 1)
+        try await waitUntil { viewModel.speakingMessageId == nil }
+    }
+
+    @Test func cannotReadStreamingCodeOnlyOrWithoutSynthesizer() {
+        let streaming = Message(chatId: chat.id, role: .assistant, text: "Hel", status: .streaming, createdAt: .now)
+        let codeOnly = Message(chatId: chat.id, role: .assistant, text: "```\nx\n```", status: .done, createdAt: .now)
+        let done = Message(chatId: chat.id, role: .assistant, text: "Hi", status: .done, createdAt: .now)
+        let withSpeech = ChatViewModel(chatId: chat.id, repository: InMemoryChatRepository(),
+                                       session: ManualChatSession(), speech: FakeSpeechSynthesizer())
+        let withoutSpeech = ChatViewModel(chatId: chat.id, repository: InMemoryChatRepository(),
+                                          session: ManualChatSession())
+
+        #expect(!withSpeech.canReadAloud(streaming))
+        #expect(!withSpeech.canReadAloud(codeOnly))
+        #expect(withSpeech.canReadAloud(done))
+        #expect(!withoutSpeech.canReadAloud(done))
+    }
 }
 

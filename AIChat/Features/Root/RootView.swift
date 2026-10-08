@@ -96,7 +96,8 @@ private struct ChatScreenContent: View {
                                                        repository: dependencies.repository,
                                                        session: dependencies.session,
                                                        onChatCreated: onChatCreated,
-                                                       copyToClipboard: { UIPasteboard.general.string = $0 }))
+                                                       copyToClipboard: { UIPasteboard.general.string = $0 },
+                                                       speech: dependencies.speech))
     }
 
     var body: some View {

@@ -66,6 +66,7 @@ extension AppContainer {
             repository: repository,
             session: service,
             connectivity: connectivity,
+            speech: SystemSpeechSynthesizer(),
             modelName: provider.displayName
         )
         return (dependencies, service)

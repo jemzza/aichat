@@ -26,23 +26,32 @@ final class ChatViewModel {
     private(set) var retryFailed = false
     /// Только что скопированный ответ — на иконке на секунду появляется галочка.
     private(set) var copiedMessageId: UUID?
+    /// Ответ, который сейчас озвучивается (из `SpeechSynthesizing.playbackUpdates()`);
+    /// может быть и из другого чата — тогда в этой ленте его просто нет.
+    private(set) var speakingMessageId: UUID?
 
     @ObservationIgnored private let repository: any ChatRepository
     @ObservationIgnored private let session: any ChatSession
     @ObservationIgnored private let onChatCreated: (UUID) -> Void
     @ObservationIgnored private let copyToClipboard: (String) -> Void
+    @ObservationIgnored private let speech: (any SpeechSynthesizing)?
+    /// Текст для озвучки по id ответа: `canReadAloud` спрашивается при каждой отрисовке
+    /// ленты (во время стрима — на каждый токен), разбирать Markdown каждый раз незачем.
+    @ObservationIgnored private var speechTextCache: [UUID: (source: String, speech: String)] = [:]
     @ObservationIgnored private var copiedResetTask: Task<Void, Never>?
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let calendar: Calendar
 
     /// - Parameter copyToClipboard: запись в буфер обмена (`UIPasteboard` из композиции),
     ///   чтобы ViewModel не зависела от UIKit.
+    /// - Parameter speech: озвучка ответов; `nil` — кнопки «Read aloud» нет.
     init(
         chatId: UUID?,
         repository: any ChatRepository,
         session: any ChatSession,
         onChatCreated: @escaping (UUID) -> Void = { _ in },
         copyToClipboard: @escaping (String) -> Void = { _ in },
+        speech: (any SpeechSynthesizing)? = nil,
         now: @escaping () -> Date = Date.init,
         calendar: Calendar = .current
     ) {
@@ -51,6 +60,7 @@ final class ChatViewModel {
         self.session = session
         self.onChatCreated = onChatCreated
         self.copyToClipboard = copyToClipboard
+        self.speech = speech
         self.now = now
         self.calendar = calendar
         hasLoaded = chatId == nil
@@ -145,6 +155,8 @@ final class ChatViewModel {
     func retry(_ message: Message) async {
         guard let chatId, canRetry(message) else { return }
         isPinnedToBottom = true
+        // Текст ответа сейчас заменится новым — старый дочитывать незачем.
+        if speakingMessageId == message.id { speech?.stop() }
         do {
             try await session.retry(assistantMessageId: message.id, inChat: chatId)
         } catch {
@@ -174,11 +186,43 @@ final class ChatViewModel {
         }
     }
 
+    // MARK: Озвучка
+
+    /// Озвучить можно законченный ответ, в котором есть что читать (не только код).
+    func canReadAloud(_ message: Message) -> Bool {
+        guard speech != nil, message.role == .assistant, message.status != .streaming,
+              !message.text.isEmpty else { return false }
+        return !speechText(for: message).isEmpty
+    }
+
+    /// «Read aloud» ↔ «Stop reading».
+    func toggleReadAloud(_ message: Message) {
+        guard let speech else { return }
+        if speakingMessageId == message.id {
+            speech.stop()
+            return
+        }
+        guard canReadAloud(message) else { return }
+        speech.speak(speechText(for: message), messageId: message.id)
+    }
+
+    private func speechText(for message: Message) -> String {
+        if let cached = speechTextCache[message.id], cached.source == message.text { return cached.speech }
+        let text = SpeechText.make(fromMarkdown: message.text)
+        speechTextCache[message.id] = (message.text, text)
+        return text
+    }
+
     // MARK: Подписки (живут, пока жива задача вызывающего — `.task(id: chatId)` во View)
 
     func observeMessages() async {
         guard let chatId else { return }
         for await messages in repository.observeMessages(chatId: chatId) {
+            // Читаемый ответ исчез из ленты (чат удалили) — замолкаем.
+            if let speakingMessageId, self.messages.contains(where: { $0.id == speakingMessageId }),
+               !messages.contains(where: { $0.id == speakingMessageId }) {
+                speech?.stop()
+            }
             self.messages = messages
             hasLoaded = true
         }
@@ -188,6 +232,13 @@ final class ChatViewModel {
         guard let chatId else { return }
         for await draft in session.draftUpdates(chatId: chatId) {
             self.draft = draft
+        }
+    }
+
+    func observeSpeech() async {
+        guard let speech else { return }
+        for await playback in speech.playbackUpdates() {
+            speakingMessageId = playback.messageId
         }
     }
 
