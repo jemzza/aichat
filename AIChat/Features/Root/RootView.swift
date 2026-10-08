@@ -79,11 +79,16 @@ struct RootView: View {
 /// Тело экрана чата. Пересоздаётся при смене чата (`.id`), чтобы у каждого
 /// чата была своя ViewModel и своя подписка на базу.
 private struct ChatScreenContent: View {
-    let chatId: UUID?
-    let dependencies: ChatDependencies
+    @State private var viewModel: ChatViewModel
+
+    init(chatId: UUID?, dependencies: ChatDependencies) {
+        _viewModel = State(initialValue: ChatViewModel(chatId: chatId,
+                                                       repository: dependencies.repository,
+                                                       session: dependencies.session))
+    }
 
     var body: some View {
-        Color.clear
+        ChatView(viewModel: viewModel)
     }
 }
 
