@@ -1,11 +1,10 @@
 import SwiftUI
 
-/// Сайдбар: «New chat», поиск, «Recents» по датам. Одна и та же вью — и в
+/// Сайдбар: «New chat», поиск, папки, «Recents» по датам. Одна и та же вью — и в
 /// выезжающей панели на iPhone, и в колонке `NavigationSplitView` на iPad.
 /// Алерты переименования/удаления вешает `RootView`: они общие с верхней панелью.
 struct SidebarView: View {
     @Bindable var viewModel: ChatListViewModel
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// Вызывается после выбора чата или «New chat» — iPhone закрывает панель.
     var onNavigate: () -> Void = {}
 
@@ -57,11 +56,20 @@ struct SidebarView: View {
     private var chatList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2) {
-                Text("Recents")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 16)
+                if !viewModel.isSearching {
+                    SidebarSectionHeader(title: "Folders") {
+                        Button("New folder", systemImage: "folder.badge.plus") { viewModel.beginCreateFolder() }
+                            .labelStyle(.iconOnly)
+                            .foregroundStyle(.appAccent)
+                            .buttonStyle(.plain)
+                    }
+                }
+                ForEach(viewModel.folderSections) { item in
+                    FolderSection(item: item, viewModel: viewModel, onNavigate: onNavigate)
+                }
+                if !viewModel.isSearching || !viewModel.sections.isEmpty {
+                    RecentsHeader(viewModel: viewModel)
+                }
                 ForEach(viewModel.sections) { section in
                     Text(section.group.title)
                         .font(.footnote)
@@ -71,7 +79,7 @@ struct SidebarView: View {
                         .padding(.bottom, 4)
                         .accessibilityAddTraits(.isHeader)
                     ForEach(section.chats) { chat in
-                        row(for: chat)
+                        ChatRow(chat: chat, viewModel: viewModel, onNavigate: onNavigate)
                     }
                 }
             }
@@ -80,30 +88,46 @@ struct SidebarView: View {
         }
         .scrollDismissesKeyboard(.immediately)
     }
+}
 
-    private func row(for chat: Chat) -> some View {
-        let isSelected = chat.id == viewModel.selectedChatId
-        return Button {
-            viewModel.select(chat)
-            onNavigate()
-        } label: {
-            // Название чата — пользовательские данные, а не строка интерфейса.
-            Text(chat.title)
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(isSelected ? AnyShapeStyle(.appSurface) : AnyShapeStyle(.clear),
-                            in: .rect(cornerRadius: 10))
-                .contentShape(.rect(cornerRadius: 10))
+/// Папка с её чатами — один элемент `LazyVStack`: строки чатов получают свою
+/// идентичность внутри папки и не путаются с теми же чатами, пока они были в «Recents».
+private struct FolderSection: View {
+    let item: FolderSectionItem
+    let viewModel: ChatListViewModel
+    let onNavigate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            FolderRow(item: item, viewModel: viewModel)
+            if item.isExpanded {
+                ForEach(item.chats) { chat in
+                    ChatRow(chat: chat, viewModel: viewModel, isNested: true, onNavigate: onNavigate)
+                }
+                if item.chats.isEmpty {
+                    Text("No chats yet")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 36)
+                        .padding(.vertical, 6)
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .contextMenu {
-            Button("Rename", systemImage: "pencil") { viewModel.beginRename(chat) }
-            Button("Delete", systemImage: "trash", role: .destructive) { viewModel.requestDelete(chat) }
-        }
+    }
+}
+
+/// Заголовок «Recents» — он же цель перетаскивания «убрать из папки».
+private struct RecentsHeader: View {
+    let viewModel: ChatListViewModel
+    @State private var isDropTargeted = false
+
+    var body: some View {
+        SidebarSectionHeader(title: "Recents")
+            .padding(.bottom, 4)
+            .dropHighlight(isDropTargeted)
+            .dropDestination(for: ChatDragItem.self) { items, _ in
+                viewModel.dropChats(items.map(\.chatId), into: nil)
+            } isTargeted: { isDropTargeted = $0 }
     }
 }
 
@@ -154,6 +178,22 @@ struct ChatListAlerts: ViewModifier {
             } message: {
                 Text("The chat and all its messages will be removed.")
             }
+            .alert(folderNameTitle, isPresented: folderNameBinding) {
+                TextField("Name", text: $viewModel.folderNameText)
+                Button("Cancel", role: .cancel) { viewModel.cancelFolderNameEditing() }
+                Button(folderNameConfirmTitle) { viewModel.commitFolderName() }
+                .disabled(!viewModel.canCommitFolderName)
+            }
+            .confirmationDialog(
+                "Delete this folder?",
+                isPresented: deleteFolderBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) { viewModel.confirmDeleteFolder() }
+                Button("Cancel", role: .cancel) { viewModel.folderPendingDeletion = nil }
+            } message: {
+                Text("Chats in it will move to Recents.")
+            }
             .alert("Something went wrong", isPresented: failureBinding) {
                 Button("OK", role: .cancel) { viewModel.dismissActionFailure() }
             } message: {
@@ -167,6 +207,22 @@ struct ChatListAlerts: ViewModifier {
 
     private var deleteBinding: Binding<Bool> {
         Binding { viewModel.chatPendingDeletion != nil } set: { if !$0 { viewModel.chatPendingDeletion = nil } }
+    }
+
+    private var folderNameTitle: LocalizedStringKey {
+        viewModel.folderNameEditing == .create ? "New folder" : "Rename folder"
+    }
+
+    private var folderNameConfirmTitle: LocalizedStringKey {
+        viewModel.folderNameEditing == .create ? "Create" : "Save"
+    }
+
+    private var folderNameBinding: Binding<Bool> {
+        Binding { viewModel.folderNameEditing != nil } set: { if !$0 { viewModel.cancelFolderNameEditing() } }
+    }
+
+    private var deleteFolderBinding: Binding<Bool> {
+        Binding { viewModel.folderPendingDeletion != nil } set: { if !$0 { viewModel.folderPendingDeletion = nil } }
     }
 
     private var failureBinding: Binding<Bool> {
@@ -199,4 +255,11 @@ private struct SidebarPreview: View {
 #Preview("Light") { SidebarPreview(dependencies: .preview()) }
 #Preview("Dark") { SidebarPreview(dependencies: .preview()).preferredColorScheme(.dark) }
 #Preview("Empty") { SidebarPreview(dependencies: .preview(repository: InMemoryChatRepository())) }
+#Preview("Empty · Dark") {
+    SidebarPreview(dependencies: .preview(repository: InMemoryChatRepository())).preferredColorScheme(.dark)
+}
+#Preview("Folders") { SidebarPreview(dependencies: .preview(repository: PreviewData.repositoryWithFolders())) }
+#Preview("Folders · Dark") {
+    SidebarPreview(dependencies: .preview(repository: PreviewData.repositoryWithFolders())).preferredColorScheme(.dark)
+}
 #endif

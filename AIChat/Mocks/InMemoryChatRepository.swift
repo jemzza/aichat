@@ -82,8 +82,9 @@ final class InMemoryChatRepository: ChatRepository {
 
     private let state = Mutex(State())
 
-    init(chats: [Chat] = [], messages: [Message] = []) {
+    init(folders: [Folder] = [], chats: [Chat] = [], messages: [Message] = []) {
         state.withLock { state in
+            for folder in folders { state.folders[folder.id] = folder }
             for chat in chats { state.chats[chat.id] = chat }
             for message in messages { state.append(message) }
         }
