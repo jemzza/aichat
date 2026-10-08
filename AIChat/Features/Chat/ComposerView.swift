@@ -5,6 +5,10 @@ struct ComposerDictation {
     var state = DictationViewModel.State.idle
     var level: Float = 0
     var canOpenSettings = false
+    /// Палец лёг на микрофон / поднялся.
+    var press: () -> Void = {}
+    var release: () -> Void = {}
+    /// VoiceOver: двойное касание.
     var toggle: () -> Void = {}
     var openSettings: () -> Void = {}
     var dismissMessage: () -> Void = {}
@@ -12,7 +16,8 @@ struct ComposerDictation {
 
 /// Поле ввода: карточка с тонкой обводкой, многострочное поле (растёт до 6 строк),
 /// справа внизу микрофон и круглая кнопка «Send», во время генерации — «Stop».
-/// Во время диктовки — акцентная обводка, индикатор «Listening…» и «Done» вместо микрофона.
+/// Диктовка — «зажми и говори»: пока микрофон зажат, за ним синий круг, у карточки
+/// акцентная обводка и индикатор «Listening…».
 struct ComposerView: View {
     @Binding var text: String
     let isGenerating: Bool
@@ -42,7 +47,6 @@ struct ComposerView: View {
         .animation(.snappy, value: dictation?.state)
         .sensoryFeedback(.impact(weight: .medium), trigger: sendCount)
         .sensoryFeedback(.impact(weight: .light), trigger: stopCount)
-        .sensoryFeedback(.start, trigger: dictation?.state == .recording) { _, isRecording in isRecording }
     }
 
     private var isRecording: Bool { dictation?.state == .recording }
@@ -67,7 +71,7 @@ struct ComposerView: View {
                 Spacer(minLength: 0)
                 Group {
                     if let dictation {
-                        DictationButton(state: dictation.state, action: dictation.toggle)
+                        DictationButton(dictation: dictation)
                     }
                     actionButton
                 }
@@ -104,40 +108,56 @@ struct ComposerView: View {
     }
 }
 
-/// Микрофон → (подготовка) → «Done». Нейтральная, без фона: главная кнопка — «Send».
+/// Микрофон «зажми и говори»: пока палец на кнопке — синий круг и запись;
+/// хаптик на нажатие и на отпускание. С VoiceOver — обычная кнопка-переключатель.
 private struct DictationButton: View {
-    let state: DictationViewModel.State
-    let action: () -> Void
+    let dictation: ComposerDictation
 
     @ScaledMetric(relativeTo: .body) private var size: CGFloat = 34
+    @State private var isPressed = false
+    @State private var pressCount = 0
+    @State private var releaseCount = 0
+
+    private var isActive: Bool {
+        switch dictation.state {
+        case .preparing, .downloading, .recording: true
+        case .idle, .unavailable, .failed, .holdHint: false
+        }
+    }
 
     var body: some View {
-        Group {
-            switch state {
-            case .preparing, .downloading:
-                // Нажатие во время подготовки — отмена.
-                Button(action: action) {
-                    ProgressView()
-                        .frame(width: size, height: size)
+        let highlighted = isPressed || isActive
+        Image(systemName: highlighted ? "mic.fill" : "mic")
+            .font(.system(size: size * 0.5))
+            .foregroundStyle(highlighted ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+            .frame(width: size, height: size)
+            // Синий — системный цвет (не бренд): «микрофон включён», как в системных диктовках.
+            .background(highlighted ? AnyShapeStyle(Color.blue) : AnyShapeStyle(.clear), in: .circle)
+            .scaleEffect(isPressed ? 1.15 : 1)
+            .animation(.snappy(duration: 0.2), value: highlighted)
+            .animation(.snappy(duration: 0.2), value: isPressed)
+            .contentTransition(.symbolEffect(.replace))
+            .contentShape(.circle)
+            // `minimumDuration: .infinity` — «долгое нажатие» никогда не срабатывает, нужен только
+            // момент касания и отпускания; палец может съехать с кнопки — запись не обрывается.
+            .onLongPressGesture(minimumDuration: .infinity, maximumDistance: .infinity) {
+            } onPressingChanged: { pressing in
+                isPressed = pressing
+                if pressing {
+                    pressCount += 1
+                    dictation.press()
+                } else {
+                    releaseCount += 1
+                    dictation.release()
                 }
-                .accessibilityLabel(Text("Cancel dictation"))
-            case .recording:
-                Button("Done", systemImage: "checkmark", action: action)
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: size * 0.45, weight: .bold))
-                    .foregroundStyle(.appAccent)
-                    .frame(width: size, height: size)
-                    .background(.appAccent.opacity(0.15), in: .circle)
-            case .idle, .unavailable, .failed:
-                Button("Dictate", systemImage: "mic", action: action)
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: size * 0.5))
-                    .foregroundStyle(.secondary)
-                    .frame(width: size, height: size)
             }
-        }
-        .contentShape(.circle)
-        .contentTransition(.symbolEffect(.replace))
+            .sensoryFeedback(.impact(weight: .medium), trigger: pressCount)
+            .sensoryFeedback(.impact(weight: .light), trigger: releaseCount)
+            .accessibilityElement()
+            .accessibilityLabel(isActive ? Text("Stop dictation") : Text("Dictate"))
+            .accessibilityHint(Text("Hold to dictate, release to stop."))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { dictation.toggle() }
     }
 }
 
@@ -163,7 +183,7 @@ private struct DictationStatus: View {
                 .textStyle(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-        case .idle, .preparing, .unavailable, .failed:
+        case .idle, .preparing, .unavailable, .failed, .holdHint:
             EmptyView()
         }
     }
