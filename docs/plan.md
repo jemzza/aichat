@@ -34,14 +34,14 @@
       `FakeConnectivityMonitor`, `PreviewData`). `LaunchOptions` (разбор
       DEBUG-аргументов, по умолчанию — без фейков). Контрактные тесты
       репозитория (параметризованные) на `InMemoryChatRepository`.
-- [ ] 1.2 GRDB: `AppDatabase`, миграция v1 (FK с `ON DELETE CASCADE`),
+- [x] 1.2 GRDB: `AppDatabase`, миграция v1 (FK с `ON DELETE CASCADE`),
       записи для `Chat`/`Message`, сортировка `createdAt, rowid`.
-- [ ] 1.3 `GRDBChatRepository` в Data — реализация протокола из 1.1
+- [x] 1.3 `GRDBChatRepository` в Data — реализация протокола из 1.1
       (транзакции для `insertChat(_:firstMessage:)`, `claimPending`,
       `claimRetry`; `ValueObservation` → `AsyncStream`).
-- [ ] 1.4 Подключить GRDB-реализацию (in-memory `DatabaseQueue`) к контрактным
+- [x] 1.4 Подключить GRDB-реализацию (in-memory `DatabaseQueue`) к контрактным
       тестам из 1.1 — все должны пройти без изменений тестов.
-- [ ] 1.5 При старте: `streaming` → `interrupted` + тест.
+- [x] 1.5 При старте: `streaming` → `interrupted` + тест.
 
 ## 2. AI-клиент (~1 ч 30 мин)
 
