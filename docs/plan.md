@@ -6,10 +6,10 @@
 
 ## 0. Каркас (~1 ч)
 
-- [ ] 0.1 `project.yml` (`developmentLanguage: en`, GRDB через `exactVersion`,
+- [x] 0.1 `project.yml` (`developmentLanguage: en`, GRDB через `exactVersion`,
       `UIApplicationSupportsMultipleScenes: false`, `Assets.xcassets` с
-      `AppIcon`/`AccentColor` и цветами `Background`/`Surface`/`Accent`
-      (Light/Dark), `Localizable.xcstrings`), `Build.command`
+      `AppIcon` и цветами `Background`/`Surface`/`Accent`
+      (Light/Dark; `Accent` — он же глобальный акцент), `Localizable.xcstrings`), `Build.command`
       (режим `NO_PAUSE=1` без ожидания клавиши), пустое приложение
       `AIChatApp` с экраном-заглушкой.
       Проверить: `NO_PAUSE=1 ./Build.command` собирает и запускает в симуляторе.
@@ -123,3 +123,5 @@ _Сюда записываем, что пошло не так и что реши
   бренда): свой сайдбар на iPhone, цвета из Assets, serif для ответов, блочный
   markdown вместо инлайнового. Раздел 4 расписан заново (~3 ч → ~5 ч), общая
   оценка ~11–12 ч.
+- 0.1: отдельного `AccentColor` нет — глобальным акцентом назначен `Accent`,
+  чтобы не держать два одинаковых цвета. Сгенерированный `Info.plist` в `.gitignore`.

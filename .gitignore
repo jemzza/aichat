@@ -1,6 +1,8 @@
 # Xcode / XcodeGen — проект генерируется из project.yml
 *.xcodeproj
 *.xcworkspace
+# Info.plist генерирует XcodeGen из project.yml
+AIChat/Info.plist
 build/
 DerivedData/
 xcuserdata/

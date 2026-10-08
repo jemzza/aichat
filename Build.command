@@ -1,6 +1,7 @@
 #!/bin/bash
 # Двойной клик в Finder: генерирует проект через XcodeGen,
 # собирает его под симулятор и запускает приложение.
+# NO_PAUSE=1 ./Build.command — без ожидания клавиши в конце (для CI/агента).
 
 set -euo pipefail
 
@@ -13,7 +14,9 @@ TOOLS="$ROOT/.tools"
 
 pause_and_exit() {
   echo
-  read -n 1 -s -r -p "Нажмите любую клавишу, чтобы закрыть окно..." || true
+  if [ "${NO_PAUSE:-0}" != "1" ]; then
+    read -n 1 -s -r -p "Нажмите любую клавишу, чтобы закрыть окно..." || true
+  fi
   exit "${1:-0}"
 }
 trap 'echo; echo "❌ Сборка прервалась с ошибкой (строка $LINENO)."; pause_and_exit 1' ERR
