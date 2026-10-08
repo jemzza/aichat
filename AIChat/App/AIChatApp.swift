@@ -2,27 +2,16 @@ import SwiftUI
 
 @main
 struct AIChatApp: App {
-    @State private var container: AppContainer
-    @State private var screens: ChatDependencies?
-
-    init() {
-        let container = AppContainer(
-            environment: AppContainer.environment(for: .processInfo),
-            launchOptions: LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
-        )
-        _container = State(initialValue: container)
-        _screens = State(initialValue: container.environment == .live ? container.makeChatDependencies() : nil)
-    }
+    @State private var container = AppContainer(
+        environment: AppContainer.environment(for: .processInfo),
+        launchOptions: LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
+    )
 
     var body: some Scene {
         WindowGroup {
             switch container.environment {
             case .live:
-                if let screens {
-                    RootView(dependencies: screens)
-                } else {
-                    PlaceholderView()
-                }
+                LiveRoot(container: container)
             case .unitTests:
                 EmptyView()
             }
@@ -30,12 +19,48 @@ struct AIChatApp: App {
     }
 }
 
-private struct PlaceholderView: View {
+/// Запуск: открываем базу (асинхронно), потом показываем экраны и запускаем `ChatService`.
+private struct LiveRoot: View {
+    let container: AppContainer
+
+    private enum Phase {
+        case loading
+        case ready(ChatDependencies, ChatService<ContinuousClock>)
+        case failed
+    }
+
+    @State private var phase = Phase.loading
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
-        Text("AI Chat")
-            .font(.largeTitle)
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color("Background"))
+        Group {
+            switch phase {
+            case .loading:
+                Color.appBackground.ignoresSafeArea()
+            case let .ready(dependencies, service):
+                RootView(dependencies: dependencies)
+                    // Сеть и запуск → outbox; живёт столько же, сколько окно.
+                    .task { await service.run() }
+                    .onChange(of: scenePhase) { _, phase in
+                        if phase == .active { service.appDidBecomeActive() }
+                    }
+            case .failed:
+                ContentUnavailableView {
+                    Label("Couldn't open chat history", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text("Please restart the app.")
+                }
+                .background(.appBackground)
+            }
+        }
+        .task {
+            guard case .loading = phase else { return }
+            do {
+                let screens = try await container.makeScreens()
+                phase = .ready(screens.dependencies, screens.service)
+            } catch {
+                phase = .failed
+            }
+        }
     }
 }
