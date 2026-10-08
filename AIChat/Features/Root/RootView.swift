@@ -87,7 +87,8 @@ private struct ChatScreenContent: View {
         _viewModel = State(initialValue: ChatViewModel(chatId: chatId,
                                                        repository: dependencies.repository,
                                                        session: dependencies.session,
-                                                       onChatCreated: onChatCreated))
+                                                       onChatCreated: onChatCreated,
+                                                       copyToClipboard: { UIPasteboard.general.string = $0 }))
     }
 
     var body: some View {

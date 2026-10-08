@@ -36,6 +36,12 @@ private final class ManualChatSession: ChatSession {
     func stopGenerating(chatId: UUID) {
         stoppedChatIds.append(chatId)
     }
+
+    private(set) var retriedMessageIds: [UUID] = []
+
+    func retry(assistantMessageId: UUID, inChat chatId: UUID) async throws {
+        retriedMessageIds.append(assistantMessageId)
+    }
 }
 
 private struct SendFailed: Error {}
@@ -202,5 +208,52 @@ struct ChatViewModelTests {
         try await waitUntil { !viewModel.isGenerating }
         viewModel.stop()
         #expect(session.stoppedChatIds == [chat.id])
+    }
+
+    // MARK: Действия с ответом
+
+    @Test func retryOnlyForRetryableRepliesWhileIdle() async throws {
+        let user = Message(chatId: chat.id, role: .user, text: "Hi", status: .sent, createdAt: .now)
+        let failed = Message(chatId: chat.id, role: .assistant, text: "", status: .failed,
+                             failure: MessageFailure(kind: .server), createdAt: .now.addingTimeInterval(1))
+        let done = Message(chatId: chat.id, role: .assistant, text: "Ok", status: .done,
+                           createdAt: .now.addingTimeInterval(2))
+        let repository = InMemoryChatRepository(chats: [chat], messages: [user, failed, done])
+        let session = ManualChatSession()
+        let viewModel = ChatViewModel(chatId: chat.id, repository: repository, session: session)
+        let messagesTask = Task { await viewModel.observeMessages() }
+        defer { messagesTask.cancel() }
+        try await waitUntil { viewModel.messages.count == 3 }
+
+        #expect(viewModel.canRetry(failed))
+        #expect(!viewModel.canRetry(done))
+        #expect(!viewModel.canRetry(user))
+
+        await viewModel.retry(done)
+        await viewModel.retry(failed)
+        #expect(session.retriedMessageIds == [failed.id])
+
+        // Пока в чате идёт генерация, повторять нельзя.
+        let streaming = Message(chatId: chat.id, role: .assistant, text: "", status: .streaming,
+                                createdAt: .now.addingTimeInterval(3))
+        try repository.insertMessage(streaming)
+        try await waitUntil { viewModel.isGenerating }
+        #expect(!viewModel.canRetry(failed))
+    }
+
+    @Test func copyWritesTextAndMarksMessage() {
+        var clipboard: [String] = []
+        let viewModel = ChatViewModel(chatId: chat.id, repository: InMemoryChatRepository(),
+                                      session: ManualChatSession(), copyToClipboard: { clipboard.append($0) })
+        let reply = Message(chatId: chat.id, role: .assistant, text: "Answer", status: .done, createdAt: .now)
+        let empty = Message(chatId: chat.id, role: .assistant, text: "", status: .failed, createdAt: .now)
+
+        viewModel.copy(empty)
+        #expect(clipboard.isEmpty)
+        #expect(viewModel.copiedMessageId == nil)
+
+        viewModel.copy(reply)
+        #expect(clipboard == ["Answer"])
+        #expect(viewModel.copiedMessageId == reply.id)
     }
 }

@@ -23,21 +23,30 @@ final class ChatViewModel {
     /// Сообщение уходит в базу — защита от двойного нажатия.
     private(set) var isSending = false
     private(set) var sendFailed = false
+    private(set) var retryFailed = false
+    /// Только что скопированный ответ — на иконке на секунду появляется галочка.
+    private(set) var copiedMessageId: UUID?
 
     @ObservationIgnored private let repository: any ChatRepository
     @ObservationIgnored private let session: any ChatSession
     @ObservationIgnored private let onChatCreated: (UUID) -> Void
+    @ObservationIgnored private let copyToClipboard: (String) -> Void
+    @ObservationIgnored private var copiedResetTask: Task<Void, Never>?
 
+    /// - Parameter copyToClipboard: запись в буфер обмена (`UIPasteboard` из композиции),
+    ///   чтобы ViewModel не зависела от UIKit.
     init(
         chatId: UUID?,
         repository: any ChatRepository,
         session: any ChatSession,
-        onChatCreated: @escaping (UUID) -> Void = { _ in }
+        onChatCreated: @escaping (UUID) -> Void = { _ in },
+        copyToClipboard: @escaping (String) -> Void = { _ in }
     ) {
         self.chatId = chatId
         self.repository = repository
         self.session = session
         self.onChatCreated = onChatCreated
+        self.copyToClipboard = copyToClipboard
         hasLoaded = chatId == nil
     }
 
@@ -92,6 +101,40 @@ final class ChatViewModel {
 
     func dismissSendFailure() {
         sendFailed = false
+    }
+
+    // MARK: Действия с ответом
+
+    /// «Retry» доступен у ответа `failed`/`interrupted`/`cancelled`, пока в чате ничего не генерируется.
+    /// Ожидание `retry-after` при 429 проверяет View (обратный отсчёт).
+    func canRetry(_ message: Message) -> Bool {
+        message.role == .assistant && message.status.isRetryable && !isGenerating
+    }
+
+    func retry(_ message: Message) async {
+        guard let chatId, canRetry(message) else { return }
+        isPinnedToBottom = true
+        do {
+            try await session.retry(assistantMessageId: message.id, inChat: chatId)
+        } catch {
+            retryFailed = true
+        }
+    }
+
+    func dismissRetryFailure() {
+        retryFailed = false
+    }
+
+    func copy(_ message: Message) {
+        guard !message.text.isEmpty else { return }
+        copyToClipboard(message.text)
+        copiedMessageId = message.id
+        copiedResetTask?.cancel()
+        copiedResetTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.copiedMessageId = nil
+        }
     }
 
     // MARK: Подписки (живут, пока жива задача вызывающего — `.task(id: chatId)` во View)

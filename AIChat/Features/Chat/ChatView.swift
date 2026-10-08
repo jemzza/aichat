@@ -17,7 +17,7 @@ struct ChatView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
                 ForEach(viewModel.displayedMessages) { message in
-                    MessageRow(message: message)
+                    MessageRow(message: message, actions: actions(for: message))
                 }
             }
             .padding(.horizontal, 16)
@@ -74,6 +74,24 @@ struct ChatView: View {
         } message: {
             Text("Please try again.")
         }
+        .alert("Couldn't retry", isPresented: retryFailedBinding) {
+            Button("OK", role: .cancel) { viewModel.dismissRetryFailure() }
+        } message: {
+            Text("Please try again.")
+        }
+    }
+
+    private var retryFailedBinding: Binding<Bool> {
+        Binding { viewModel.retryFailed } set: { if !$0 { viewModel.dismissRetryFailure() } }
+    }
+
+    private func actions(for message: Message) -> MessageActions {
+        MessageActions(
+            canRetry: viewModel.canRetry(message),
+            isCopied: viewModel.copiedMessageId == message.id,
+            copy: { viewModel.copy(message) },
+            retry: { Task { await viewModel.retry(message) } }
+        )
     }
 
     private func send() {
@@ -103,57 +121,6 @@ private struct ScrollToBottomButton: View {
             .overlay { Circle().strokeBorder(.secondary.opacity(0.35)) }
             .shadow(color: .primary.opacity(0.08), radius: 6, y: 2)
             .contentShape(.circle)
-    }
-}
-
-/// Одно сообщение: пузырь пользователя справа или ответ ассистента на всю ширину.
-struct MessageRow: View {
-    let message: Message
-
-    var body: some View {
-        switch message.role {
-        case .user: UserBubble(text: message.text)
-        case .assistant: AssistantText(text: message.text)
-        }
-    }
-}
-
-private struct UserBubble: View {
-    let text: String
-
-    var body: some View {
-        // Текст сообщения — пользовательские данные, а не строка интерфейса.
-        Text(text)
-            .textStyle(.userMessage)
-            .foregroundStyle(.primary)
-            .textSelection(.enabled)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.appSurface, in: .rect(cornerRadius: 20))
-            .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.8 }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-    }
-}
-
-private struct AssistantText: View {
-    let text: String
-
-    var body: some View {
-        // Блочный markdown — шаг 4.7; пока только инлайн-разметка.
-        Text(Self.inlineMarkdown(text))
-            .textStyle(.assistantMessage)
-            .foregroundStyle(.primary)
-            .lineSpacing(3)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // Плавное появление новых токенов.
-            .contentTransition(.opacity)
-            .animation(.easeOut(duration: 0.25), value: text)
-    }
-
-    private static func inlineMarkdown(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 }
 
