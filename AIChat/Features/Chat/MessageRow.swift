@@ -30,24 +30,52 @@ private struct UserMessage: View {
     let message: Message
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            // Текст сообщения — пользовательские данные, а не строка интерфейса.
-            Text(message.text)
-                .textStyle(.userMessage)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.appSurface, in: .rect(cornerRadius: 20))
+        TrailingFractionLayout(fraction: 0.8) {
+            VStack(alignment: .trailing, spacing: 6) {
+                // Текст сообщения — пользовательские данные, а не строка интерфейса.
+                Text(message.text)
+                    .textStyle(.userMessage)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.appSurface, in: .rect(cornerRadius: 20))
 
-            if message.status == .pending {
-                Label("Will send when online", systemImage: "clock")
-                    .textStyle(.caption)
-                    .foregroundStyle(.secondary)
+                if message.status == .pending {
+                    Label("Will send when online", systemImage: "clock")
+                        .textStyle(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .containerRelativeFrame(.horizontal, alignment: .trailing) { width, _ in width * 0.8 }
-        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// Пузырь пользователя: не шире `fraction` от ширины, которую предлагает лента, и прижат вправо.
+///
+/// Не `containerRelativeFrame`: в `NavigationSplitView` (iPad, Mac) контейнером для него
+/// оказывалось всё окно, а не колонка чата, — пузырь становился шире колонки и уезжал
+/// за правый край при открытом сайдбаре.
+private struct TrailingFractionLayout: Layout {
+    let fraction: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let size = subview.sizeThatFits(childProposal(for: proposal.width))
+        // Строка занимает всю предложенную ширину, чтобы пузырь можно было прижать вправо.
+        return CGSize(width: proposal.width ?? size.width, height: size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let subview = subviews.first else { return }
+        let childProposal = childProposal(for: bounds.width)
+        let size = subview.sizeThatFits(childProposal)
+        subview.place(at: CGPoint(x: bounds.maxX, y: bounds.minY), anchor: .topTrailing,
+                      proposal: ProposedViewSize(width: size.width, height: size.height))
+    }
+
+    private func childProposal(for width: CGFloat?) -> ProposedViewSize {
+        ProposedViewSize(width: width.map { $0 * fraction }, height: nil)
     }
 }
 
