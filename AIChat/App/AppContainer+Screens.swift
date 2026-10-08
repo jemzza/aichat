@@ -77,6 +77,7 @@ extension AppContainer {
         let repository = try await makeRepository(plan.storage)
         let connectivity = makeConnectivity(plan.network)
         let provider = makeProvider(plan.model)
+        let dictation = makeDictation(plan.dictation, connectivity: connectivity)
         let service = ChatService(
             repository: repository,
             provider: provider,
@@ -90,7 +91,8 @@ extension AppContainer {
             session: service,
             connectivity: connectivity,
             speech: SystemSpeechSynthesizer(),
-            transcriber: makeTranscriber(plan.dictation, connectivity: connectivity),
+            recorder: dictation.recorder,
+            transcriber: dictation.transcriber,
             prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: provider.displayName
         )
@@ -155,17 +157,20 @@ extension AppContainer {
         return nil
     }
 
-    private func makeTranscriber(
+    private func makeDictation(
         _ dictation: DependencyPlan.Dictation,
         connectivity: any ConnectivityMonitoring
-    ) -> any SpeechTranscribing {
+    ) -> (recorder: any VoiceRecording, transcriber: any SpeechTranscribing) {
         #if DEBUG
-        if dictation == .scripted { return FakeSpeechTranscriber(script: .phrase(Self.dictationPhrase, wordDelay: .milliseconds(500))) }
+        if dictation == .scripted {
+            return (FakeVoiceRecorder(),
+                    FakeSpeechTranscriber(result: .success(Self.dictationPhrase), delay: .milliseconds(800)))
+        }
         #endif
         if #available(iOS 26, *), SpeechTranscriber.isAvailable {
-            return AnalyzerSpeechTranscriber(connectivity: connectivity)
+            return (SystemVoiceRecorder(), AnalyzerSpeechTranscriber(connectivity: connectivity))
         }
-        return RecognizerSpeechTranscriber(connectivity: connectivity)
+        return (SystemVoiceRecorder(), RecognizerSpeechTranscriber(connectivity: connectivity))
     }
 
     #if DEBUG

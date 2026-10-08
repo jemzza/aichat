@@ -7,7 +7,7 @@ import Foundation
 /// - `-mockOffline` — сеть всегда «нет»;
 /// - `-mockError 429|401|403|500|offline` — LLM отвечает этой ошибкой;
 /// - `-mockSlowStream` — LLM-фейк с медленным стримингом;
-/// - `-mockDictation` — диктовка без микрофона: фейк «надиктовывает» фразу по словам;
+/// - `-mockDictation` — диктовка без микрофона: фейковая запись и распознавание заданной фразы;
 /// - `-mockOnDeviceModel` — фейковая «модель на устройстве» для «Answer offline» (и на iOS 18).
 struct LaunchOptions: Hashable, Sendable {
     var useMockData = false

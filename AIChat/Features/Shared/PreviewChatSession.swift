@@ -174,6 +174,7 @@ extension ChatDependencies {
             session: PreviewChatSession(repository: repository, connectivity: connectivity),
             connectivity: connectivity,
             speech: FakeSpeechSynthesizer(),
+            recorder: FakeVoiceRecorder(),
             transcriber: FakeSpeechTranscriber(),
             prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: "Groq · gpt-oss-120b"

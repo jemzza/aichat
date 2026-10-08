@@ -19,12 +19,7 @@ final class ChatViewModel {
     private(set) var isPinnedToBottom = true
 
     /// Текст в поле ввода.
-    var inputText = "" {
-        didSet {
-            // Правка пользователя во время диктовки — останавливаем её, правку не трогаем.
-            if inputText != dictatedText, dictation?.isActive == true { dictation?.detach() }
-        }
-    }
+    var inputText = ""
     /// Фото к следующему сообщению — уже уменьшенные, в порядке выбора.
     private(set) var attachments: [ImageAttachment] = []
     /// Фото из библиотеки ещё уменьшаются — «Send» подождёт.
@@ -54,7 +49,6 @@ final class ChatViewModel {
     /// Текст для озвучки по id ответа: `canReadAloud` спрашивается при каждой отрисовке
     /// ленты (во время стрима — на каждый токен), разбирать Markdown каждый раз незачем.
     /// Последний текст, который вставила диктовка, — чтобы отличить его от правки пользователя.
-    @ObservationIgnored private var dictatedText: String?
     @ObservationIgnored private var speechTextCache: [UUID: (source: String, speech: String)] = [:]
     @ObservationIgnored private var copiedResetTask: Task<Void, Never>?
     @ObservationIgnored private let now: () -> Date
@@ -63,7 +57,7 @@ final class ChatViewModel {
     /// - Parameter copyToClipboard: запись в буфер обмена (`UIPasteboard` из композиции),
     ///   чтобы ViewModel не зависела от UIKit.
     /// - Parameter speech: озвучка ответов; `nil` — кнопки «Read aloud» нет.
-    /// - Parameter transcriber: диктовка; `nil` — кнопки микрофона нет.
+    /// - Parameters recorder, transcriber: диктовка (запись → распознавание); `nil` — кнопки микрофона нет.
     /// - Parameter prepareImage: уменьшение фото для вложения; `nil` — кнопки «+» нет.
     /// - Parameter openSettings: открыть настройки приложения (разрешения микрофона).
     init(
@@ -73,6 +67,7 @@ final class ChatViewModel {
         onChatCreated: @escaping (UUID) -> Void = { _ in },
         copyToClipboard: @escaping (String) -> Void = { _ in },
         speech: (any SpeechSynthesizing)? = nil,
+        recorder: (any VoiceRecording)? = nil,
         transcriber: (any SpeechTranscribing)? = nil,
         prepareImage: (@Sendable (Data) async -> Data?)? = nil,
         openSettings: @escaping () -> Void = {},
@@ -86,7 +81,12 @@ final class ChatViewModel {
         self.copyToClipboard = copyToClipboard
         self.speech = speech
         self.prepareImage = prepareImage
-        dictation = transcriber.map { DictationViewModel(transcriber: $0, speech: speech, openSettings: openSettings) }
+        if let recorder, let transcriber {
+            dictation = DictationViewModel(recorder: recorder, transcriber: transcriber,
+                                           speech: speech, openSettings: openSettings)
+        } else {
+            dictation = nil
+        }
         self.now = now
         self.calendar = calendar
         hasLoaded = chatId == nil
@@ -133,8 +133,8 @@ final class ChatViewModel {
     }
 
     func send() async {
-        // «Send» во время диктовки: сначала дожидаемся последней фразы.
-        if let dictation, dictation.isActive { await dictation.finish() }
+        // «Send» во время диктовки: сначала дожидаемся распознавания записи.
+        if let dictation, dictation.isActive { await dictation.release() }
         guard canSend else { return }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = attachments
@@ -210,30 +210,22 @@ final class ChatViewModel {
 
     /// Зажали микрофон — начинаем запись (если ещё не идёт).
     func beginDictation() {
-        guard let dictation, !dictation.isActive else { return }
-        startDictation(dictation)
+        dictation?.press(onText: appendDictated)
     }
 
-    /// Отпустили микрофон.
+    /// Отпустили микрофон: запись распознаётся, текст дописывается в поле.
     func endDictation() async {
         await dictation?.release()
     }
 
-    /// VoiceOver: двойное касание включает и выключает запись (держать кнопку неудобно).
+    /// VoiceOver: двойное касание начинает и заканчивает запись (держать кнопку неудобно).
     func toggleDictation() async {
-        guard let dictation else { return }
-        if dictation.isActive {
-            await dictation.finish()
-            return
-        }
-        startDictation(dictation)
+        await dictation?.toggle(onText: appendDictated)
     }
 
-    private func startDictation(_ dictation: DictationViewModel) {
-        dictation.start(prefix: inputText) { [weak self] text in
-            self?.dictatedText = text
-            self?.inputText = text
-        }
+    /// Дописываем к тому, что в поле сейчас, — пользователь мог печатать, пока шло распознавание.
+    private func appendDictated(_ text: String) {
+        inputText = DictationText.join(inputText, text)
     }
 
     /// Экран закрыт — микрофон не должен остаться включённым.

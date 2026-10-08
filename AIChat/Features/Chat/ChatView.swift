@@ -138,6 +138,7 @@ struct ChatView: View {
         guard let dictation = viewModel.dictation else { return nil }
         return ComposerDictation(
             state: dictation.state,
+            duration: dictation.duration,
             level: dictation.level,
             canOpenSettings: dictation.canOpenSettings,
             press: { viewModel.beginDictation() },
@@ -199,6 +200,7 @@ private struct ChatViewPreview: View {
                                                        repository: dependencies.repository,
                                                        session: dependencies.session,
                                                        speech: dependencies.speech,
+                                                       recorder: dependencies.recorder,
                                                        transcriber: dependencies.transcriber,
                                                        prepareImage: dependencies.prepareImage))
     }
