@@ -37,11 +37,11 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 | Хранилище | GRDB 7 (SPM), версия зафиксирована `exactVersion` в `project.yml` | `ValueObservation` → `AsyncSequence` хорошо ложится на MVVM; модели — `Sendable struct`; SwiftData тянет `@Query` во View и плохо дружит со строгой конкурентностью. `Package.resolved` лежит внутри игнорируемого `.xcodeproj`, поэтому версию фиксируем в спеке |
 | AI-провайдер | Groq, OpenAI-совместимый `/chat/completions` со `stream: true` | Бесплатный тариф, очень быстрый стриминг |
 | Модель | `openai/gpt-oss-120b` (production). Параметры запроса: `stream: true`, `reasoning_effort: "low"`, `include_reasoning: false`, `max_completion_tokens: 1024`. Запасной вариант — `openai/gpt-oss-20b` (лимиты те же, считаются отдельно на модель); автоматически не переключаемся. Лимиты Free-тарифа (docs, 2026-10-08): **30 RPM, 1 000 RPD, 8 000 TPM, 200 000 TPD**. Узкое место — 8K TPM: длинный контекст ⇒ ~2–3 запроса в минуту | Лучшая из бесплатных production-моделей для русского; `llama-3.3-70b-versatile` и `llama-3.1-8b-instant` отключаются 16.08.2026, Qwen — только preview. gpt-oss — reasoning-модель: без `include_reasoning: false` в ответ попадают рассуждения, `low` ускоряет первый токен |
-| Лимиты в UI | При 429 читаем заголовок `retry-after` (секунды) и показываем «Try again in N s» на плашке ошибки; остальные `x-ratelimit-*` не используем | Понятная ошибка «кончился лимит» без лишней логики |
-| Контекст запроса | Системный промпт («отвечай на языке пользователя, кратко») + `ChatRepository.history(chatId:before:limit:)`: user — `sent`; assistant — `done` и `cancelled` с непустым текстом; `failed`/`interrupted`/`pending`/`streaming` пропускаются. `limit` = последние 20 сообщений, дополнительно `ChatService` режет до ~6000 символов (≈2K токенов + до 1K на ответ — укладываемся в 8K TPM и ~70+ запросов в день по TPD) | Экономия лимита ключа; частичный ответ после «Стоп» — тоже контекст |
+| Лимиты в UI | При 429 читаем заголовок `retry-after` (только секунды, как присылает Groq; HTTP-дату не разбираем) и показываем «Try again in N s» на плашке ошибки; остальные `x-ratelimit-*` не используем | Понятная ошибка «кончился лимит» без лишней логики |
+| Контекст запроса | Системный промпт («отвечай на языке пользователя, кратко») добавляет сам `GroqProvider`, если история не начинается с `system` (у Foundation Models это будут `instructions`) + `ChatRepository.history(chatId:before:limit:)`: user — `sent`; assistant — `done` и `cancelled` с непустым текстом; `failed`/`interrupted`/`pending`/`streaming` пропускаются. `limit` = последние 20 сообщений, дополнительно `ChatService` режет до ~6000 символов (≈2K токенов + до 1K на ответ — укладываемся в 8K TPM и ~70+ запросов в день по TPD) | Экономия лимита ключа; частичный ответ после «Стоп» — тоже контекст |
 | Автозаголовок | Обрезка первого сообщения пользователя (~40 символов), без запроса к LLM | Не тратить лимит |
 | Офлайн-AI | Foundation Models за `#available(iOS 26, *)`, тот же протокол `LLMProvider`. Без сети по умолчанию — `pending`; если системная модель доступна — кнопка «Answer offline». Автоматически офлайн-моделью не отвечаем | Правила 1 и 6 offline-first не конфликтуют; качество локальной модели ниже |
-| Сеть | `URLSession.bytes(for:)` + собственный SSE-парсер, построчный (`AsyncBytes.lines` пропускает пустые строки — разделитель событий не нужен, у Groq одно событие = одна строка `data:`) | Без лишних зависимостей |
+| Сеть | `URLSession.bytes(for:)` + собственный SSE-парсер, построчный (`AsyncBytes.lines` пропускает пустые строки — разделитель событий не нужен, у Groq одно событие = одна строка `data:`). Транспорт — за протоколом `HTTPLineStreaming` (заголовок ответа + строки тела), в тестах — заглушка | Без лишних зависимостей; провайдер тестируется без сети и `URLProtocol` |
 | Статус сети | `NWPathMonitor` за протоколом `ConnectivityMonitoring` | Для outbox и баннера «нет сети»; в тестах и DEBUG — фейк (на симуляторе монитор ненадёжен) |
 | Ключ | XOR с солью, генерация `scripts/gen_secrets.py` из env. **Запускает пользователь вручную**, агент — никогда. Файл закоммичен; пустой ключ (`GroqConfiguration.hasAPIKey == false`) → ошибка `unauthorized` | Ключ не попадает в чат с агентом и в git открытым текстом |
 | DEBUG-хуки | Launch-аргументы `-mockData`, `-mockOffline`, `-mockError 429\|401\|403\|500\|offline`, `-mockSlowStream` разбирает `LaunchOptions`; `AppContainer` по умолчанию собирает **только реальные** реализации, фейк подключается лишь при своём аргументе. В Release аргументы игнорируются (`#if DEBUG`) | Сценарии ошибок проверяемы без правки кода; фейки не могут попасть в обычный запуск |
@@ -99,7 +99,11 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
   `networkConnectionLost`, `dataNotAllowed`, `timedOut`, `cannotFindHost`,
   `cannotConnectToHost`; прочие `URLError` → `unknown`.
 - `CancellationError` и `URLError.cancelled` — не ошибка, а «Стоп» → `cancelled`.
-- HTTP ≠ 200: дочитать тело (ограниченно), маппить по коду.
+- HTTP ≠ 200: дочитать тело (до 4 KB), маппить по коду: 401 → `unauthorized`,
+  403 → `forbidden`, 429 → `rateLimited` + `retry-after`, 5xx → `server`;
+  прочие коды — по `type`/`code` из тела, иначе `unknown`.
+- Пустой ключ → `unauthorized` без запроса в сеть.
+- Соединение закрылось без `data: [DONE]` → `unknown` (ответ обрезан, а не готов).
 - Ошибка внутри SSE при HTTP 200 (`data: {"error": …}`) → по полю `type`/`code`,
   иначе `server`.
 - Тексты ошибок не содержат ключ, URL с параметрами и сырой ответ сервера.
