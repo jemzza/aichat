@@ -135,6 +135,124 @@ struct GroqProviderTests {
         #expect(result.error != nil)
     }
 
+    // MARK: - Ошибки
+
+    @Test func missingKeyIsUnauthorizedWithoutRequest() async {
+        let transport = StubLineStreamer(sse: ["data: [DONE]"])
+        let provider = GroqProvider(configuration: GroqConfiguration(apiKey: "", model: "m"), transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect(result.error as? LLMError == LLMError(kind: .unauthorized))
+        #expect(transport.requests.isEmpty)
+    }
+
+    @Test(arguments: [
+        (401, ErrorKind.unauthorized),
+        (403, .forbidden),
+        (500, .server),
+        (503, .server),
+        (418, .unknown),
+    ])
+    func httpStatusIsMapped(status: Int, kind: ErrorKind) async {
+        let transport = StubLineStreamer(events: [
+            .head(HTTPResponseHead(statusCode: status)),
+            .line(#"{"error":{"message":"details","type":"x"}}"#),
+        ])
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect(result.text.isEmpty)
+        #expect((result.error as? LLMError)?.kind == kind)
+    }
+
+    @Test func rateLimitCarriesRetryAfter() async {
+        let transport = StubLineStreamer(events: [
+            .head(HTTPResponseHead(statusCode: 429, headers: ["retry-after": "17"])),
+            .line(#"{"error":{"message":"Rate limit reached","type":"tokens","code":"rate_limit_exceeded"}}"#),
+        ])
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect(result.error as? LLMError == LLMError(kind: .rateLimited, retryAfter: .seconds(17)))
+    }
+
+    /// Тело ошибки читаем ограниченно: бесконечное тело не держит запрос.
+    @Test func errorBodyIsReadWithLimit() async throws {
+        let longLine = String(repeating: "x", count: GroqProvider.errorBodyLimit)
+        let transport = StubLineStreamer(
+            events: [.head(HTTPResponseHead(statusCode: 502)), .line(longLine)],
+            ending: .hang
+        )
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect((result.error as? LLMError)?.kind == .server)
+        try await waitUntil { transport.terminatedEarly }
+    }
+
+    /// Ошибка внутри SSE при HTTP 200: полученный текст остаётся, ошибка — по `type`/`code`.
+    @Test func streamErrorAfterPartialText() async {
+        let transport = StubLineStreamer(sse: [
+            chunk("Partial"),
+            #"data: {"error":{"message":"Rate limit reached","type":"tokens","code":"rate_limit_exceeded"}}"#,
+            chunk("never"),
+        ])
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect(result.text == "Partial")
+        #expect((result.error as? LLMError)?.kind == .rateLimited)
+    }
+
+    @Test func unknownStreamErrorIsServer() async {
+        let transport = StubLineStreamer(sse: [#"data: {"error":{"message":"oops"}}"#])
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect((result.error as? LLMError)?.kind == .server)
+    }
+
+    @Test func offlineTransportError() async {
+        let transport = StubLineStreamer(events: [], ending: .fail(URLError(.notConnectedToInternet)))
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect(result.error as? LLMError == LLMError(kind: .offline))
+    }
+
+    /// `URLError.cancelled` от транспорта — это «Stop», не «нет сети».
+    @Test func urlCancelledIsNotOffline() async {
+        let transport = StubLineStreamer(sse: [chunk("Part")], ending: .fail(URLError(.cancelled)))
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+
+        #expect(result.text == "Part")
+        #expect(result.error == nil)
+    }
+
+    /// В ошибке нет ни ключа, ни текста ответа сервера.
+    @Test func errorDoesNotLeakDetails() async {
+        let transport = StubLineStreamer(events: [
+            .head(HTTPResponseHead(statusCode: 401)),
+            .line(#"{"error":{"message":"server secret details","code":"invalid_api_key"}}"#),
+        ])
+        let provider = GroqProvider(configuration: configuration, transport: transport)
+
+        let result = await collect(provider.streamReply(to: []))
+        let description = String(reflecting: result.error)
+
+        #expect(!description.contains("test-key"))
+        #expect(!description.contains("secret details"))
+    }
+
     private func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + timeout
         while !condition() {

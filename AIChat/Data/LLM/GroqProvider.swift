@@ -36,8 +36,10 @@ struct GroqProvider: LLMProvider {
                     // «Stop» — не ошибка: поток просто заканчивается.
                     if Task.isCancelled {
                         continuation.finish()
+                    } else if let llmError = GroqErrorMapper.map(error) {
+                        continuation.finish(throwing: llmError)
                     } else {
-                        continuation.finish(throwing: error)
+                        continuation.finish()
                     }
                 }
             }
@@ -48,6 +50,8 @@ struct GroqProvider: LLMProvider {
     // MARK: - Запрос
 
     static func makeRequest(messages: [LLMMessage], configuration: GroqConfiguration) throws -> URLRequest {
+        // Пустой ключ (не сгенерирован `Secrets`) — сразу 401, без запроса в сеть.
+        guard configuration.hasAPIKey else { throw LLMError(kind: .unauthorized) }
         guard let endpoint else { throw LLMError(kind: .unknown) }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -90,28 +94,40 @@ struct GroqProvider: LLMProvider {
 
     // MARK: - Ответ
 
+    /// Сколько символов тела ошибки дочитываем при HTTP ≠ 200.
+    static let errorBodyLimit = 4096
+
     private static func run(
         _ request: URLRequest,
         transport: any HTTPLineStreaming,
         emit: (String) -> Void
     ) async throws {
         var head: HTTPResponseHead?
-        for try await event in transport.stream(request) {
+        var errorBody = ""
+        reading: for try await event in transport.stream(request) {
             switch event {
             case let .head(responseHead):
                 head = responseHead
-                guard responseHead.statusCode == 200 else { throw LLMError(kind: .unknown) }
             case let .line(line):
-                guard head != nil else { continue }
+                guard let head else { continue }
+                if head.statusCode != 200 {
+                    // Тело ошибки дочитываем ограниченно: нужен только `{"error": …}`.
+                    errorBody += line + "\n"
+                    if errorBody.count >= errorBodyLimit { break reading }
+                    continue
+                }
                 switch SSEParser.parse(line: line) {
                 case let .delta(text): emit(text)
                 case .done: return
-                case .error: throw LLMError(kind: .server)
+                case let .error(payload): throw GroqErrorMapper.map(streamError: payload)
                 case nil: continue
                 }
             }
         }
         try Task.checkCancellation()
+        if let head, head.statusCode != 200 {
+            throw GroqErrorMapper.map(head: head, payload: GroqErrorMapper.payload(fromBody: errorBody))
+        }
         // Соединение закрылось без `[DONE]` — ответ, скорее всего, обрезан.
         throw LLMError(kind: .unknown)
     }
