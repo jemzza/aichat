@@ -176,6 +176,10 @@ struct DictationMessagePresentation: Sendable {
         case .unavailable(.languageNotSupported):
             title = "Dictation isn't available offline for your language."
             systemImage = "globe"
+        case .unavailable(.dictationDisabled):
+            // «Open Settings» тут не поможет: он открывает настройки приложения, а не клавиатуры.
+            title = "Dictation is turned off on this iPhone. Turn it on in Settings › General › Keyboard."
+            systemImage = "keyboard"
         case .unavailable(.serviceUnavailable):
             title = "Speech recognition isn't available right now. Please try again later."
             systemImage = "waveform.slash"

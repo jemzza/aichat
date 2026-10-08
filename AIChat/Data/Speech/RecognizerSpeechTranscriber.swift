@@ -12,6 +12,8 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
         let request: SFSpeechAudioBufferRecognitionRequest
         let task: SFSpeechRecognitionTask
         let continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation
+        /// Пользователь отпустил кнопку: ошибка «нечего распознавать» после этого — не ошибка.
+        var isFinishing = false
     }
 
     private let connectivity: any ConnectivityMonitoring
@@ -42,6 +44,7 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
 
     func finish() {
         guard let session else { return }
+        self.session?.isFinishing = true
         // Микрофон выключаем сразу; финальный результат придёт в обработчик задачи.
         session.capture.stop()
         session.request.endAudio()
@@ -65,8 +68,8 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
         request.taskHint = .dictation
 
         let task = Self.recognitionTask(recognizer: recognizer, request: request, continuation: continuation) {
-            [weak self] in
-            Task { @MainActor in self?.end(id: id) }
+            [weak self] failure in
+            Task { @MainActor in self?.end(id: id, failure: failure) }
         }
 
         // `SFSpeechAudioBufferRecognitionRequest` не `Sendable`, но `append` документирован
@@ -87,11 +90,20 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
         continuation.yield(.recording)
     }
 
-    /// Нормальное завершение: финальный результат уже отдан.
-    private func end(id: UUID) {
+    /// Распознавание закончилось: финальный результат уже отдан или пришла ошибка.
+    /// Ошибка до отпускания кнопки — для пользователя («диктовка выключена», «не вышло»);
+    /// после — обычно «речи не было», текст уже в поле.
+    private func end(id: UUID, failure: RecognitionFailure?) {
         guard let session, session.id == id else { return }
         session.capture.stop()
-        session.continuation.finish()
+        switch failure {
+        case .dictationDisabled:
+            session.continuation.finish(throwing: DictationUnavailability.dictationDisabled)
+        case .other(let error) where !session.isFinishing:
+            session.continuation.finish(throwing: error)
+        case .other, nil:
+            session.continuation.finish()
+        }
         self.session = nil
         interruptions?.cancel()
     }
@@ -146,7 +158,7 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
         recognizer: SFSpeechRecognizer,
         request: SFSpeechAudioBufferRecognitionRequest,
         continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation,
-        onEnd: @escaping @Sendable () -> Void
+        onEnd: @escaping @Sendable (RecognitionFailure?) -> Void
     ) -> SFSpeechRecognitionTask {
         recognizer.recognitionTask(with: request) { result, error in
             let text = result?.bestTranscription.formattedString
@@ -156,10 +168,11 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
                 continuation.yield(.transcript(transcript))
             }
             if let error {
-                // Ошибка после «отпустил» (тишина, нечего распознавать) — не ошибка для пользователя.
                 DictationLog.logger.info("Recognition ended: \(String(describing: error), privacy: .public)")
+                onEnd(RecognitionFailure(error))
+            } else if isFinal {
+                onEnd(nil)
             }
-            if isFinal || error != nil { onEnd() }
         }
     }
 
@@ -175,6 +188,28 @@ final class RecognizerSpeechTranscriber: SpeechTranscribing {
             }
         }
     }
+}
+
+/// Ошибка распознавания, сведённая к тому, что важно для UI (`Sendable`, в отличие от `NSError`).
+enum RecognitionFailure: Sendable {
+    /// В системе выключены «Siri и Диктовка» — `SFSpeechRecognizer` без этого не работает.
+    case dictationDisabled
+    case other(any Error & Sendable)
+
+    init(_ error: any Error) {
+        let error = error as NSError
+        if error.domain == "kLSRErrorDomain", error.code == 201 {
+            self = .dictationDisabled
+        } else {
+            self = .other(RecognitionError(domain: error.domain, code: error.code))
+        }
+    }
+}
+
+/// Код ошибки распознавания без `userInfo` — его достаточно для лога и `failed`.
+struct RecognitionError: Error, Sendable {
+    let domain: String
+    let code: Int
 }
 
 /// Журнал диктовки: какой путь выбран и почему не вышло. Текст речи сюда не пишем.

@@ -175,7 +175,7 @@ struct DictationTests {
 
     @Test func everyUnavailabilityHasMessage() {
         let reasons: [DictationUnavailability] = [
-            .microphoneDenied, .recognitionDenied, .languageNotSupported, .needsDownload, .serviceUnavailable,
+            .microphoneDenied, .recognitionDenied, .languageNotSupported, .needsDownload, .serviceUnavailable, .dictationDisabled,
         ]
         for reason in reasons {
             #expect(DictationMessagePresentation(state: .unavailable(reason)) != nil)

@@ -27,6 +27,8 @@ enum DictationUnavailability: Error, Hashable, Sendable {
     case needsDownload
     /// Офлайн-модели нет, сеть есть, но сервер распознавания Apple сейчас недоступен.
     case serviceUnavailable
+    /// В системе выключена диктовка («Siri и Диктовка») — без неё `SFSpeechRecognizer` не работает.
+    case dictationDisabled
 }
 
 enum DictationEvent: Hashable, Sendable {
