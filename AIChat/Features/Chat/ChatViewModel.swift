@@ -32,6 +32,8 @@ final class ChatViewModel {
     @ObservationIgnored private let onChatCreated: (UUID) -> Void
     @ObservationIgnored private let copyToClipboard: (String) -> Void
     @ObservationIgnored private var copiedResetTask: Task<Void, Never>?
+    @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private let calendar: Calendar
 
     /// - Parameter copyToClipboard: запись в буфер обмена (`UIPasteboard` из композиции),
     ///   чтобы ViewModel не зависела от UIKit.
@@ -40,13 +42,17 @@ final class ChatViewModel {
         repository: any ChatRepository,
         session: any ChatSession,
         onChatCreated: @escaping (UUID) -> Void = { _ in },
-        copyToClipboard: @escaping (String) -> Void = { _ in }
+        copyToClipboard: @escaping (String) -> Void = { _ in },
+        now: @escaping () -> Date = Date.init,
+        calendar: Calendar = .current
     ) {
         self.chatId = chatId
         self.repository = repository
         self.session = session
         self.onChatCreated = onChatCreated
         self.copyToClipboard = copyToClipboard
+        self.now = now
+        self.calendar = calendar
         hasLoaded = chatId == nil
     }
 
@@ -63,6 +69,21 @@ final class ChatViewModel {
 
     var showsScrollToBottomButton: Bool { !isPinnedToBottom && !messages.isEmpty }
 
+    // MARK: Пустой экран
+
+    /// Новый чат без сообщений: приветствие и подсказки.
+    var showsEmptyState: Bool { hasLoaded && messages.isEmpty && !isSending }
+
+    /// Время суток берётся при отрисовке — после ночи на экране уже «Good morning».
+    var greeting: Greeting { Greeting(date: now(), calendar: calendar) }
+
+    var suggestions: [Suggestion] { Suggestion.all }
+
+    /// Чип отправляет запрос сразу, не трогая то, что пользователь начал печатать.
+    func send(suggestion: Suggestion) async {
+        await send(text: String(localized: suggestion.prompt))
+    }
+
     // MARK: Поле ввода
 
     /// Идёт генерация ответа — вместо «Send» показываем «Stop».
@@ -78,6 +99,11 @@ final class ChatViewModel {
         guard canSend else { return }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         inputText = ""
+        await send(text: text, restoresInput: true)
+    }
+
+    private func send(text: String, restoresInput: Bool = false) async {
+        guard !isSending, !isGenerating, !text.isEmpty else { return }
         isSending = true
         isPinnedToBottom = true
         defer { isSending = false }
@@ -85,11 +111,13 @@ final class ChatViewModel {
             let id = try await session.send(text, inChat: chatId)
             if chatId == nil {
                 chatId = id
+                // Подписка на новый чат ещё не вернула сообщения — не мигаем пустым экраном.
+                hasLoaded = false
                 onChatCreated(id)
             }
         } catch {
             // Ничего не потеряли: возвращаем текст в поле, если пользователь не начал новый.
-            if inputText.isEmpty { inputText = text }
+            if restoresInput, inputText.isEmpty { inputText = text }
             sendFailed = true
         }
     }

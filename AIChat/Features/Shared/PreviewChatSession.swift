@@ -167,6 +167,7 @@ extension ChatDependencies {
         ChatDependencies(
             repository: repository,
             session: PreviewChatSession(repository: repository, connectivity: connectivity),
+            connectivity: connectivity,
             modelName: "Groq · gpt-oss-120b"
         )
     }

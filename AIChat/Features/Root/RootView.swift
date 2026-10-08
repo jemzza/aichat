@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
     private let dependencies: ChatDependencies
     @State private var chatList: ChatListViewModel
+    @State private var connectivity: ConnectivityStatus
     @State private var isSidebarOpen = false
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -13,6 +14,7 @@ struct RootView: View {
         self.dependencies = dependencies
         _chatList = State(initialValue: ChatListViewModel(repository: dependencies.repository,
                                                           session: dependencies.session))
+        _connectivity = State(initialValue: ConnectivityStatus(monitor: dependencies.connectivity))
     }
 
     var body: some View {
@@ -25,6 +27,7 @@ struct RootView: View {
         }
         .chatListAlerts(chatList)
         .task { await chatList.observe() }
+        .task { await connectivity.observe() }
     }
 
     private var drawerLayout: some View {
@@ -64,12 +67,17 @@ struct RootView: View {
                 onRename: { chatList.beginRename($0) },
                 onNewChat: { chatList.startNewChat() }
             )
+            if !connectivity.isOnline {
+                OfflineBanner()
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             ChatScreenContent(chatId: chatList.selectedChatId, dependencies: dependencies) { id in
                 chatList.didCreateChat(id: id)
             }
             .id(chatList.screenID)
                 .frame(maxHeight: .infinity)
         }
+        .animation(.snappy, value: connectivity.isOnline)
         .background(.appBackground)
     }
 

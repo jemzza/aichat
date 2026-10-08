@@ -57,6 +57,16 @@ struct ChatView: View {
             }
         }
         .animation(.snappy, value: viewModel.showsScrollToBottomButton)
+        .overlay {
+            if viewModel.showsEmptyState {
+                EmptyChatView(greeting: viewModel.greeting, suggestions: viewModel.suggestions) { suggestion in
+                    Task { await viewModel.send(suggestion: suggestion) }
+                }
+                .background(.appBackground)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: viewModel.showsEmptyState)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ComposerView(
                 text: $viewModel.inputText,

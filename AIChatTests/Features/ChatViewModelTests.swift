@@ -260,4 +260,47 @@ struct ChatViewModelTests {
         viewModel.copyText("")
         #expect(clipboard == ["Answer", "let x = 1"])
     }
+
+    // MARK: Пустой экран
+
+    @Test func emptyStateOnlyForChatWithoutMessages() async throws {
+        let newChat = ChatViewModel(chatId: nil, repository: InMemoryChatRepository(), session: ManualChatSession())
+        #expect(newChat.showsEmptyState)
+
+        let (user, reply) = makeMessages()
+        let repository = InMemoryChatRepository(chats: [chat], messages: [user, reply])
+        let existing = ChatViewModel(chatId: chat.id, repository: repository, session: ManualChatSession())
+        #expect(!existing.showsEmptyState)
+        let messagesTask = Task { await existing.observeMessages() }
+        defer { messagesTask.cancel() }
+        try await waitUntil { existing.hasLoaded }
+        #expect(!existing.showsEmptyState)
+    }
+
+    @Test func greetingFollowsInjectedClock() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let afternoon = Date(timeIntervalSince1970: 13 * 3600)
+        let viewModel = ChatViewModel(chatId: nil, repository: InMemoryChatRepository(), session: ManualChatSession(),
+                                      now: { afternoon }, calendar: calendar)
+        #expect(viewModel.greeting == .afternoon)
+    }
+
+    @Test func suggestionSendsPromptAndKeepsTypedText() async {
+        let session = ManualChatSession()
+        let createdId = UUID()
+        session.sendResult = .success(createdId)
+        let viewModel = ChatViewModel(chatId: nil, repository: InMemoryChatRepository(), session: session)
+        viewModel.inputText = "draft"
+        let suggestion = Suggestion.all[0]
+
+        await viewModel.send(suggestion: suggestion)
+
+        #expect(session.sent.map(\.text) == [String(localized: suggestion.prompt)])
+        #expect(viewModel.inputText == "draft")
+        #expect(viewModel.chatId == createdId)
+        // Подписка на созданный чат ещё не отдала сообщения — приветствие не мигает.
+        #expect(!viewModel.showsEmptyState)
+    }
 }
+

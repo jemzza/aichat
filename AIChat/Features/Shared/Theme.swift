@@ -18,18 +18,21 @@ enum TextStyle {
     case userMessage
     case chatTitle
     case caption
+    /// Приветствие на пустом экране — крупно, с засечками.
+    case greeting
 
     var font: Font {
         switch self {
         case .assistantMessage, .userMessage: .body
         case .chatTitle: .headline
         case .caption: .caption
+        case .greeting: .largeTitle
         }
     }
 
     var design: Font.Design {
         switch self {
-        case .assistantMessage: .serif
+        case .assistantMessage, .greeting: .serif
         case .userMessage, .chatTitle, .caption: .default
         }
     }
