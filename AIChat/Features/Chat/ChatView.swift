@@ -74,6 +74,7 @@ struct ChatView: View {
                 text: $viewModel.inputText,
                 isGenerating: viewModel.isGenerating,
                 canSend: viewModel.canSend,
+                dictation: composerDictation,
                 onSend: send,
                 onStop: { viewModel.stop() }
             )
@@ -82,6 +83,7 @@ struct ChatView: View {
         .task(id: viewModel.chatId) { await viewModel.observeMessages() }
         .task(id: viewModel.chatId) { await viewModel.observeDraft() }
         .task { await viewModel.observeSpeech() }
+        .onDisappear { viewModel.stopDictation() }
         .alert("Message not sent", isPresented: sendFailedBinding) {
             Button("OK", role: .cancel) { viewModel.dismissSendFailure() }
         } message: {
@@ -108,6 +110,18 @@ struct ChatView: View {
             toggleReadAloud: { viewModel.toggleReadAloud(message) },
             retry: { Task { await viewModel.retry(message) } },
             copyText: { viewModel.copyText($0) }
+        )
+    }
+
+    private var composerDictation: ComposerDictation? {
+        guard let dictation = viewModel.dictation else { return nil }
+        return ComposerDictation(
+            state: dictation.state,
+            level: dictation.level,
+            canOpenSettings: dictation.canOpenSettings,
+            toggle: { Task { await viewModel.toggleDictation() } },
+            openSettings: { dictation.openSettings() },
+            dismissMessage: { dictation.dismissMessage() }
         )
     }
 
@@ -150,7 +164,8 @@ private struct ChatViewPreview: View {
         _viewModel = State(initialValue: ChatViewModel(chatId: chat.id,
                                                        repository: dependencies.repository,
                                                        session: dependencies.session,
-                                                       speech: dependencies.speech))
+                                                       speech: dependencies.speech,
+                                                       transcriber: dependencies.transcriber))
     }
 
     var body: some View {

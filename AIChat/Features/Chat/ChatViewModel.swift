@@ -19,7 +19,14 @@ final class ChatViewModel {
     private(set) var isPinnedToBottom = true
 
     /// Текст в поле ввода.
-    var inputText = ""
+    var inputText = "" {
+        didSet {
+            // Правка пользователя во время диктовки — останавливаем её, правку не трогаем.
+            if inputText != dictatedText, dictation?.isActive == true { dictation?.detach() }
+        }
+    }
+    /// Диктовка в поле ввода; `nil` — кнопки микрофона нет.
+    let dictation: DictationViewModel?
     /// Сообщение уходит в базу — защита от двойного нажатия.
     private(set) var isSending = false
     private(set) var sendFailed = false
@@ -37,6 +44,8 @@ final class ChatViewModel {
     @ObservationIgnored private let speech: (any SpeechSynthesizing)?
     /// Текст для озвучки по id ответа: `canReadAloud` спрашивается при каждой отрисовке
     /// ленты (во время стрима — на каждый токен), разбирать Markdown каждый раз незачем.
+    /// Последний текст, который вставила диктовка, — чтобы отличить его от правки пользователя.
+    @ObservationIgnored private var dictatedText: String?
     @ObservationIgnored private var speechTextCache: [UUID: (source: String, speech: String)] = [:]
     @ObservationIgnored private var copiedResetTask: Task<Void, Never>?
     @ObservationIgnored private let now: () -> Date
@@ -45,6 +54,8 @@ final class ChatViewModel {
     /// - Parameter copyToClipboard: запись в буфер обмена (`UIPasteboard` из композиции),
     ///   чтобы ViewModel не зависела от UIKit.
     /// - Parameter speech: озвучка ответов; `nil` — кнопки «Read aloud» нет.
+    /// - Parameter transcriber: диктовка; `nil` — кнопки микрофона нет.
+    /// - Parameter openSettings: открыть настройки приложения (разрешения микрофона).
     init(
         chatId: UUID?,
         repository: any ChatRepository,
@@ -52,6 +63,8 @@ final class ChatViewModel {
         onChatCreated: @escaping (UUID) -> Void = { _ in },
         copyToClipboard: @escaping (String) -> Void = { _ in },
         speech: (any SpeechSynthesizing)? = nil,
+        transcriber: (any SpeechTranscribing)? = nil,
+        openSettings: @escaping () -> Void = {},
         now: @escaping () -> Date = Date.init,
         calendar: Calendar = .current
     ) {
@@ -61,6 +74,7 @@ final class ChatViewModel {
         self.onChatCreated = onChatCreated
         self.copyToClipboard = copyToClipboard
         self.speech = speech
+        dictation = transcriber.map { DictationViewModel(transcriber: $0, speech: speech, openSettings: openSettings) }
         self.now = now
         self.calendar = calendar
         hasLoaded = chatId == nil
@@ -106,6 +120,8 @@ final class ChatViewModel {
     }
 
     func send() async {
+        // «Send» во время диктовки: сначала дожидаемся последней фразы.
+        if let dictation, dictation.isActive { await dictation.finish() }
         guard canSend else { return }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         inputText = ""
@@ -139,6 +155,26 @@ final class ChatViewModel {
 
     func dismissSendFailure() {
         sendFailed = false
+    }
+
+    // MARK: Диктовка
+
+    /// Микрофон ↔ «Done».
+    func toggleDictation() async {
+        guard let dictation else { return }
+        if dictation.isActive {
+            await dictation.finish()
+            return
+        }
+        dictation.start(prefix: inputText) { [weak self] text in
+            self?.dictatedText = text
+            self?.inputText = text
+        }
+    }
+
+    /// Экран закрыт — микрофон не должен остаться включённым.
+    func stopDictation() {
+        dictation?.cancel()
     }
 
     // MARK: Действия с ответом
@@ -191,7 +227,7 @@ final class ChatViewModel {
     /// Озвучить можно законченный ответ, в котором есть что читать (не только код).
     func canReadAloud(_ message: Message) -> Bool {
         guard speech != nil, message.role == .assistant, message.status != .streaming,
-              !message.text.isEmpty else { return false }
+              !message.text.isEmpty, dictation?.isActive != true else { return false }
         return !speechText(for: message).isEmpty
     }
 

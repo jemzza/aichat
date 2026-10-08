@@ -97,11 +97,17 @@ private struct ChatScreenContent: View {
                                                        session: dependencies.session,
                                                        onChatCreated: onChatCreated,
                                                        copyToClipboard: { UIPasteboard.general.string = $0 },
-                                                       speech: dependencies.speech))
+                                                       speech: dependencies.speech,
+                                                       transcriber: dependencies.transcriber,
+                                                       openSettings: Self.openAppSettings))
     }
 
     var body: some View {
         ChatView(viewModel: viewModel)
+    }
+    private static func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 }
 

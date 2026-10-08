@@ -125,7 +125,7 @@ iOS 18 и iOS 26.
       чтения, выбор голоса по языку (`NLLanguageRecognizer`),
       `SystemSpeechSynthesizer` на `AVSpeechSynthesizer`, иконка под ответом.
       Тесты: очистка Markdown, выбор голоса, `ChatViewModel`.
-- [ ] 7.B Диктовка: протокол `SpeechTranscribing`, реализации на
+- [x] 7.B Диктовка: протокол `SpeechTranscribing`, реализации на
       `SpeechAnalyzer` (iOS 26) и `SFSpeechRecognizer` on-device (iOS 18) за
       `#available`, `AVAudioSession`, `NSMicrophoneUsageDescription` /
       `NSSpeechRecognitionUsageDescription`, состояния записи в поле ввода,
@@ -224,3 +224,9 @@ _Сюда записываем, что пошло не так и что реши
   заказчика скачиваем при первой диктовке (если есть сеть), без сети —
   запасной путь `SFSpeechRecognizer` on-device. Аргумент `-mockDictation`
   (фейковая диктовка) — для скриншотов и сценариев без микрофона.
+- 7.B, проверка: UI записи проверен на iOS 18 с `-mockDictation`; реальный путь
+  дошёл до системного запроса разрешения (тексты `Info.plist` на месте).
+  Распознавание с микрофоном и загрузка модели `SpeechTranscriber` на iOS 26 —
+  в 7.C (разрешения выдаёт пользователь). Системный текст запроса
+  `SFSpeechRecognizer` говорит про отправку в Apple, хотя мы требуем
+  `requiresOnDeviceRecognition`, — упомянуть в README.

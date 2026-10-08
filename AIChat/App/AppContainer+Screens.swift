@@ -135,7 +135,7 @@ extension AppContainer {
         connectivity: any ConnectivityMonitoring
     ) -> any SpeechTranscribing {
         #if DEBUG
-        if dictation == .scripted { return FakeSpeechTranscriber(script: .phrase(Self.dictationPhrase)) }
+        if dictation == .scripted { return FakeSpeechTranscriber(script: .phrase(Self.dictationPhrase, wordDelay: .milliseconds(500))) }
         #endif
         if #available(iOS 26, *), SpeechTranscriber.isAvailable {
             return AnalyzerSpeechTranscriber(connectivity: connectivity)
