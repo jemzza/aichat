@@ -22,8 +22,21 @@ struct ChatListViewModelTests {
         Message(chatId: chat.id, role: .user, text: "Hi", status: .sent, createdAt: chat.updatedAt)
     }
 
-    private func makeViewModel(chats: [Chat]) async throws -> (ChatListViewModel, InMemoryChatRepository, Task<Void, Never>) {
-        let repository = InMemoryChatRepository(chats: chats, messages: chats.map(Self.message(in:)))
+    private static func folder(_ name: String, position: Int) -> Folder {
+        Folder(id: UUID(), name: name, position: position, createdAt: now)
+    }
+
+    private static func chat(_ title: String, daysAgo: Double, in folder: Folder) -> Chat {
+        var chat = chat(title, daysAgo: daysAgo)
+        chat.folderId = folder.id
+        return chat
+    }
+
+    private func makeViewModel(
+        folders: [Folder] = [],
+        chats: [Chat]
+    ) async throws -> (ChatListViewModel, InMemoryChatRepository, Task<Void, Never>) {
+        let repository = InMemoryChatRepository(folders: folders, chats: chats, messages: chats.map(Self.message(in:)))
         let viewModel = ChatListViewModel(
             repository: repository,
             session: PreviewChatSession(repository: repository),
@@ -92,13 +105,13 @@ struct ChatListViewModelTests {
         viewModel.beginRename(chat)
         viewModel.renameText = "   "
         #expect(!viewModel.canCommitRename)
-        await viewModel.commitRename()
+        await viewModel.commitRename()?.value
         #expect(viewModel.renamingChat == nil)
         #expect(viewModel.chats.first?.title == "Old title")
 
         viewModel.beginRename(chat)
         viewModel.renameText = "  New title \n"
-        await viewModel.commitRename()
+        await viewModel.commitRename()?.value
         try await waitUntil { viewModel.chats.first?.title == "New title" }
     }
 
@@ -110,7 +123,7 @@ struct ChatListViewModelTests {
 
         viewModel.select(first)
         viewModel.requestDelete(first)
-        await viewModel.confirmDelete()
+        await viewModel.confirmDelete()?.value
 
         #expect(viewModel.selectedChatId == nil)
         try await waitUntil { viewModel.chats.map(\.id) == [second.id] }
@@ -157,5 +170,218 @@ struct ChatListViewModelTests {
 
         #expect(viewModel.selectedChatId == id)
     }
-}
 
+    // MARK: Папки
+
+    @Test func chatsInFoldersAreNotInRecents() async throws {
+        let work = Self.folder("Work", position: 0)
+        let inFolder = Self.chat("Report", daysAgo: 0, in: work)
+        let loose = Self.chat("Loose", daysAgo: 1)
+        let (viewModel, _, observation) = try await makeViewModel(folders: [work], chats: [inFolder, loose])
+        defer { observation.cancel() }
+
+        #expect(viewModel.sections.flatMap(\.chats).map(\.id) == [loose.id])
+        #expect(viewModel.folderSections.map(\.folder.id) == [work.id])
+        #expect(viewModel.folderSections.first?.chats.map(\.id) == [inFolder.id])
+        #expect(viewModel.folderSections.first?.isExpanded == true)
+        #expect(Set(viewModel.chats.map(\.id)) == [inFolder.id, loose.id])
+        #expect(!viewModel.hasNoSearchResults)
+    }
+
+    @Test func emptyFolderAloneIsNotEmptyState() async throws {
+        let (viewModel, _, observation) = try await makeViewModel(folders: [Self.folder("Ideas", position: 0)], chats: [])
+        defer { observation.cancel() }
+
+        #expect(!viewModel.isEmpty)
+        #expect(viewModel.folderSections.first?.totalCount == 0)
+    }
+
+    @Test func searchHidesFoldersWithoutMatchesAndExpandsTheRest() async throws {
+        let work = Self.folder("Work", position: 0)
+        let travel = Self.folder("Travel", position: 1)
+        let (viewModel, _, observation) = try await makeViewModel(folders: [work, travel], chats: [
+            Self.chat("Swift actors", daysAgo: 0, in: work),
+            Self.chat("Budget", daysAgo: 0, in: work),
+            Self.chat("Lisbon", daysAgo: 0, in: travel),
+            Self.chat("Swift macros", daysAgo: 1),
+        ])
+        defer { observation.cancel() }
+        viewModel.toggleExpanded(work)
+        #expect(viewModel.folderSections.first?.isExpanded == false)
+
+        viewModel.searchText = "swift"
+
+        #expect(viewModel.folderSections.map(\.folder.id) == [work.id])
+        #expect(viewModel.folderSections.first?.chats.map(\.title) == ["Swift actors"])
+        #expect(viewModel.folderSections.first?.totalCount == 2)
+        #expect(viewModel.folderSections.first?.isExpanded == true)
+        #expect(viewModel.sections.flatMap(\.chats).map(\.title) == ["Swift macros"])
+
+        viewModel.searchText = "nothing"
+        #expect(viewModel.hasNoSearchResults)
+    }
+
+    @Test func dropMovesKnownChatIntoFolderAndBack() async throws {
+        let work = Self.folder("Work", position: 0)
+        let chat = Self.chat("Report", daysAgo: 0)
+        let (viewModel, _, observation) = try await makeViewModel(folders: [work], chats: [chat])
+        defer { observation.cancel() }
+        viewModel.select(chat)
+        viewModel.toggleExpanded(work)
+
+        #expect(viewModel.dropChats([chat.id], into: work.id))
+        try await waitUntil { viewModel.folderSections.first?.chats.map(\.id) == [chat.id] }
+        #expect(viewModel.sections.isEmpty)
+        // Свёрнутая папка раскрывается, чтобы было видно, куда упал чат.
+        #expect(viewModel.folderSections.first?.isExpanded == true)
+        #expect(viewModel.selectedChatId == chat.id)
+
+        // Повторный дроп в ту же папку — переносить нечего.
+        #expect(!viewModel.dropChats([chat.id], into: work.id))
+
+        #expect(viewModel.dropChats([chat.id], into: nil))
+        try await waitUntil { viewModel.sections.flatMap(\.chats).map(\.id) == [chat.id] }
+        #expect(viewModel.folderSections.first?.chats.isEmpty == true)
+        #expect(!viewModel.actionFailed)
+    }
+
+    @Test func dropWithUnknownChatOrFolderIsIgnored() async throws {
+        let work = Self.folder("Work", position: 0)
+        let chat = Self.chat("Report", daysAgo: 0)
+        let (viewModel, repository, observation) = try await makeViewModel(folders: [work], chats: [chat])
+        defer { observation.cancel() }
+
+        #expect(!viewModel.dropChats([UUID()], into: work.id))
+        #expect(!viewModel.dropChats([chat.id], into: UUID()))
+        #expect(!viewModel.dropChats([], into: work.id))
+
+        // Папку удалили, а снимок во ViewModel ещё не обновился.
+        repository.deleteFolder(id: work.id)
+        try await waitUntil { viewModel.folderSections.isEmpty }
+        #expect(!viewModel.dropChats([chat.id], into: work.id))
+
+        // Неизвестные id в смешанном дропе отбрасываются, известные переносятся.
+        let travel = Self.folder("Travel", position: 0)
+        repository.createFolder(id: travel.id, name: travel.name, createdAt: travel.createdAt)
+        try await waitUntil { viewModel.folderSections.count == 1 }
+        #expect(viewModel.dropChats([UUID(), chat.id, chat.id], into: travel.id))
+        try await waitUntil { viewModel.folderSections.first?.chats.map(\.id) == [chat.id] }
+        #expect(!viewModel.actionFailed)
+    }
+
+    @Test func dropRacingWithChatDeletionDoesNotAlert() async throws {
+        let work = Self.folder("Work", position: 0)
+        let chat = Self.chat("Report", daysAgo: 0)
+        let (viewModel, repository, observation) = try await makeViewModel(folders: [work], chats: [chat])
+        defer { observation.cancel() }
+
+        // Снимок ещё содержит чат, а в хранилище его уже нет.
+        repository.deleteChat(id: chat.id)
+        #expect(viewModel.dropChats([chat.id], into: work.id))
+        try await waitUntil { viewModel.chats.isEmpty }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!viewModel.actionFailed)
+    }
+
+    @Test func createAndRenameFolderTrimsNameAndRejectsBlank() async throws {
+        let (viewModel, _, observation) = try await makeViewModel(chats: [])
+        defer { observation.cancel() }
+
+        viewModel.beginCreateFolder()
+        viewModel.folderNameText = "  "
+        #expect(!viewModel.canCommitFolderName)
+        await viewModel.commitFolderName()?.value
+        #expect(viewModel.folderNameEditing == nil)
+        #expect(viewModel.folderSections.isEmpty)
+
+        viewModel.beginCreateFolder()
+        viewModel.folderNameText = " Work \n"
+        await viewModel.commitFolderName()?.value
+        try await waitUntil { viewModel.folderSections.map(\.folder.name) == ["Work"] }
+
+        let folder = try #require(viewModel.folderSections.first?.folder)
+        viewModel.beginRenameFolder(folder)
+        #expect(viewModel.folderNameText == "Work")
+        viewModel.folderNameText = "Projects"
+        await viewModel.commitFolderName()?.value
+        try await waitUntil { viewModel.folderSections.map(\.folder.name) == ["Projects"] }
+        #expect(!viewModel.actionFailed)
+    }
+
+    @Test func deleteFolderMovesChatsToRecentsAndKeepsSelection() async throws {
+        let work = Self.folder("Work", position: 0)
+        let chat = Self.chat("Report", daysAgo: 0, in: work)
+        let (viewModel, _, observation) = try await makeViewModel(folders: [work], chats: [chat])
+        defer { observation.cancel() }
+        viewModel.select(chat)
+
+        viewModel.requestDeleteFolder(work)
+        await viewModel.confirmDeleteFolder()?.value
+
+        try await waitUntil { viewModel.folderSections.isEmpty }
+        #expect(viewModel.folderPendingDeletion == nil)
+        #expect(viewModel.sections.flatMap(\.chats).map(\.id) == [chat.id])
+        #expect(viewModel.selectedChatId == chat.id)
+        #expect(!viewModel.actionFailed)
+    }
+
+    @Test func moveFolderUpAndDownRespectsBounds() async throws {
+        let a = Self.folder("A", position: 0)
+        let b = Self.folder("B", position: 1)
+        let c = Self.folder("C", position: 2)
+        let (viewModel, _, observation) = try await makeViewModel(folders: [a, b, c], chats: [])
+        defer { observation.cancel() }
+        #expect(viewModel.folderSections.map(\.canMoveUp) == [false, true, true])
+        #expect(viewModel.folderSections.map(\.canMoveDown) == [true, true, false])
+
+        await viewModel.moveFolderUp(c)
+        try await waitUntil { viewModel.folderSections.map(\.folder.name) == ["A", "C", "B"] }
+
+        await viewModel.moveFolderDown(a)
+        try await waitUntil { viewModel.folderSections.map(\.folder.name) == ["C", "A", "B"] }
+
+        // За края — ничего не происходит.
+        await viewModel.moveFolderUp(viewModel.folderSections[0].folder)
+        await viewModel.moveFolderDown(viewModel.folderSections[2].folder)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(viewModel.folderSections.map(\.folder.name) == ["C", "A", "B"])
+        #expect(!viewModel.actionFailed)
+    }
+
+    // MARK: Алерты
+
+    /// Алерт, закрываясь, сбрасывает состояние через binding сразу после нажатия кнопки —
+    /// раньше, чем начнётся запись. Подтверждение должно пережить этот сброс.
+    @Test func confirmationsSurviveAlertDismissal() async throws {
+        let chat = Self.chat("Old title", daysAgo: 0)
+        let doomed = Self.chat("Doomed", daysAgo: 1)
+        let work = Self.folder("Work", position: 0)
+        let (viewModel, _, observation) = try await makeViewModel(folders: [work], chats: [chat, doomed])
+        defer { observation.cancel() }
+
+        viewModel.beginRename(chat)
+        viewModel.renameText = "New title"
+        let rename = viewModel.commitRename()
+        viewModel.cancelRename()
+
+        viewModel.requestDelete(doomed)
+        let delete = viewModel.confirmDelete()
+        viewModel.chatPendingDeletion = nil
+
+        viewModel.beginCreateFolder()
+        viewModel.folderNameText = "Travel"
+        let create = viewModel.commitFolderName()
+        viewModel.cancelFolderNameEditing()
+
+        viewModel.requestDeleteFolder(work)
+        let deleteFolder = viewModel.confirmDeleteFolder()
+        viewModel.folderPendingDeletion = nil
+
+        for task in [rename, delete, create, deleteFolder] { await task?.value }
+        try await waitUntil {
+            viewModel.chats.map(\.title) == ["New title"]
+                && viewModel.folderSections.map(\.folder.name) == ["Travel"]
+        }
+        #expect(!viewModel.actionFailed)
+    }
+}

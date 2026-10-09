@@ -60,7 +60,7 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 | Цвета | Системные + `Background`, `Surface`, `Accent` из `Assets.xcassets` (у каждого варианты Light и Dark) | Тёплая «бумажная» палитра из UI-референса |
 | Навигация | iPhone (compact): свой выезжающий сайдбар поверх `NavigationStack`; iPad/Mac (regular): `NavigationSplitView`. Верхняя панель своя | Как в референсе; своя панель одинаково выглядит на iOS 18 и 26 (нет автоматического Liquid Glass у навбара) |
 | Фон во время стриминга | `beginBackgroundTask` на время генерации; если система всё же оборвала — `interrupted` | |
-| Тесты | Swift Testing | SSE-парсер, деобфускация, маппинг ошибок, `ChatService` с фейками; контрактные тесты `ChatRepository` — параметризованные, одни и те же для `InMemoryChatRepository` и GRDB-реализации |
+| Тесты | Swift Testing; UI-тесты — XCUITest (`AIChatUITests`, `-mockData`) | SSE-парсер, деобфускация, маппинг ошибок, `ChatService` с фейками; контрактные тесты `ChatRepository` — параметризованные, одни и те же для `InMemoryChatRepository` и GRDB-реализации. UI-тест — там, где важно поведение системного UI (алерты), которое модульный тест обходит |
 | Озвучка ответов | `AVSpeechSynthesizer` за протоколом `SpeechSynthesizing` (`Domain/Protocols`), реализация в `Data/Speech`, живёт в `AppContainer`. Язык — `NLLanguageRecognizer` по тексту без кода, голос — по языку, региону пользователя и качеству. Перед чтением Markdown превращается в текст (`MarkdownParser`), блоки кода не читаются. Какое сообщение читается — знает только синтезатор (`playbackUpdates()`), ViewModel подписана | Встроено в iOS 18, работает офлайн; одно состояние на всё приложение — две озвучки одновременно невозможны |
 | Голосовой ввод | Диктовка «зажми и говори» в два шага: пока палец на микрофоне — **запись звука** во временный файл (хаптик, синий круг `Color.blue`, «Recording 0:03» с уровнем громкости; не дольше 60 с); отпустил — файл целиком **распознаётся** («Transcribing…»), текст дописывается в поле ввода, пользователь правит и отправляет сам. Временный файл удаляется сразу после распознавания (и при ошибке/отмене; остатки — при запуске). Нажатие короче ~0,5 с — подсказка «держи кнопку». С VoiceOver — двойное касание начинает и заканчивает запись. Протоколы: `VoiceRecording` (запись) и `SpeechTranscribing` (файл → текст) | Решение заказчика: сначала запись, потом распознавание — проще и надёжнее потокового распознавания, понятные состояния; аудио не хранится, голосовых пузырей нет |
 | Распознавание речи | Файл записи: iOS 26 — `SpeechAnalyzer(inputAudioFile:…)` + `SpeechTranscriber` (если `SpeechTranscriber.isAvailable` и язык поддерживается; модель языка система скачивает **один раз** через `AssetInventory`, если есть сеть). Иначе — `SFSpeechURLRecognitionRequest`: на устройстве, если язык это поддерживает, иначе при наличии сети — **через серверы Apple**; требует включённой системной диктовки. Язык — первый из `Locale.preferredLanguages`, который поддерживается. Разрешения (микрофон, распознавание) спрашиваем при первом нажатии, до записи | По возможности на устройстве; запасной путь через сервер Apple — решение заказчика. Сторонних сервисов и SPM-зависимостей нет |
@@ -75,7 +75,12 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
 Все модели — `struct`/`enum`, `Sendable`, `Hashable`, в `Domain/Models/`.
 
 - `Chat`: `id` (UUID), `title`, `createdAt`, `updatedAt` (= время последнего
-  сообщения; обновляет репозиторий). В БД появляется только с первым сообщением.
+  сообщения; обновляет репозиторий), `folderId: UUID?` (`nil` — «Recents»;
+  FK `ON DELETE SET NULL`, миграция v2). В БД появляется только с первым сообщением.
+- `Folder`: `id` (UUID), `name`, `position` (ручной порядок, 0..n-1 без
+  пропусков, задаёт репозиторий), `createdAt`.
+- `SidebarSnapshot`: `folders` (секции `folder` + её `chats`, по `position`) и
+  `recents` (чаты без папки); чаты везде новые сверху.
 - `Message`: `id` (UUID), `chatId` (FK, `ON DELETE CASCADE`), `role`
   (`user`/`assistant`), `text`, `status`, `failure: MessageFailure?`, `createdAt`.
   Сортировка — `ORDER BY createdAt, rowid` (время может совпасть).
@@ -95,7 +100,7 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
   `forbidden` (403, например регион), `server` (5xx), `unsupportedLanguage`
   (модель на устройстве не знает язык), `unknown`.
 - `LLMError`: `kind: ErrorKind`, `retryAfter: Duration?` — то, что бросает `LLMProvider`.
-- Ошибки репозитория: `MessageNotFound(id)`, `ChatNotFound(id)`.
+- Ошибки репозитория: `MessageNotFound(id)`, `ChatNotFound(id)`, `FolderNotFound(id)`.
 
 ## Протоколы (`Domain/Protocols/`)
 
@@ -105,6 +110,10 @@ AI-чат для iPhone в духе ChatGPT. Тестовое задание; о
   (нет сообщения → `MessageNotFound`), `history(chatId:before:limit:)`,
   `pendingMessages`, `claimPending(messageId:reply:) -> Bool`,
   `claimRetry(assistantMessageId:) -> Bool`, `markStreamingAsInterrupted`.
+  Папки: `observeSidebar() -> SidebarSnapshot`, `createFolder` (в конец),
+  `renameFolder`, `deleteFolder` (идемпотентно, чаты → «Recents»),
+  `moveFolder(id:to:)` (индекс зажимается), `moveChat(id:toFolder:)`
+  (`nil` — в «Recents», `updatedAt` не меняется).
 - `LLMProvider` — `displayName: LocalizedStringResource`,
   `streamReply(to: [LLMMessage]) -> AsyncThrowingStream<String, Error>`;
   отмена `Task` потребителя прерывает запрос, а цикл `for try await` при этом
@@ -268,8 +277,11 @@ Apple, когда офлайн-модели языка нет (см. «Расп�
   `Transferable` со своим `UTType`, объявленным в `project.yml`) и всегда —
   пункт «Move to folder» в контекстном меню чата (доступность). Дроп с
   неизвестным или уже несуществующим ID игнорируется.
-- **Управление папками.** «New folder», контекстное меню папки
-  «Rename» / «Delete», изменение порядка папок.
+- **Управление папками.** «New folder» (кнопка в заголовке «Folders»),
+  контекстное меню папки «Rename» / «Move Up» / «Move Down» / «Delete»
+  (с подтверждением). Порядок папок меняется только этими пунктами —
+  перетаскивания папок нет. Папку можно свернуть нажатием; свёрнутость
+  хранится в памяти, после перезапуска все папки развёрнуты.
 
 ## Известные риски
 

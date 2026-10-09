@@ -9,12 +9,15 @@ struct ChatRecord: Codable, Hashable, Sendable {
     var title: String
     var createdAt: Date
     var updatedAt: Date
+    /// Колонка из миграции v2; `nil` — чат в «Recents».
+    var folderId: UUID?
 
     enum Columns {
         static let id = Column(CodingKeys.id)
         static let title = Column(CodingKeys.title)
         static let createdAt = Column(CodingKeys.createdAt)
         static let updatedAt = Column(CodingKeys.updatedAt)
+        static let folderId = Column(CodingKeys.folderId)
     }
 }
 
@@ -36,10 +39,11 @@ extension ChatRecord {
         title = chat.title
         createdAt = chat.createdAt
         updatedAt = chat.updatedAt
+        folderId = chat.folderId
     }
 
     var chat: Chat {
-        Chat(id: id, title: title, createdAt: createdAt, updatedAt: updatedAt)
+        Chat(id: id, title: title, createdAt: createdAt, updatedAt: updatedAt, folderId: folderId)
     }
 
     /// Чаты, новые (по `updatedAt`) сверху.

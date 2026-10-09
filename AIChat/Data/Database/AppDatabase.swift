@@ -31,7 +31,8 @@ struct AppDatabase: Sendable {
 
     private static func makeConfiguration() -> Configuration {
         var configuration = Configuration()
-        // По умолчанию так и есть, но каскадное удаление сообщений держится именно на этом.
+        // По умолчанию так и есть, но каскадное удаление сообщений и
+        // возврат чатов удалённой папки в «Recents» держатся именно на этом.
         configuration.foreignKeysEnabled = true
         return configuration
     }
@@ -70,8 +71,26 @@ struct AppDatabase: Sendable {
             )
         }
 
-        // «v2» занят папками (ветка feat/folders) — у миграций разные имена, порядок между
-        // ними не важен: таблицы независимы.
+        migrator.registerMigration("v2") { db in
+            // Папки одного уровня с ручным порядком.
+            try db.create(table: FolderRecord.databaseTableName) { t in
+                t.primaryKey("id", .blob)
+                t.column("name", .text).notNull()
+                t.column("position", .integer).notNull().indexed()
+                t.column("createdAt", .double).notNull()
+            }
+            // Чат — максимум в одной папке. Удаление папки возвращает чаты в «Recents»;
+            // существующие чаты получают NULL, т. е. тоже оказываются в «Recents».
+            try db.alter(table: ChatRecord.databaseTableName) { t in
+                t.add(column: "folderId", .blob)
+                    .references(FolderRecord.databaseTableName, onDelete: .setNull)
+            }
+            try db.create(index: "chat_on_folderId", on: ChatRecord.databaseTableName, columns: ["folderId"])
+        }
+
+        // «v3» в main появилась раньше «v2» (папки делались в отдельной ветке). GRDB применяет
+        // все неприменённые миграции по порядку регистрации, даже если более поздняя уже
+        // применена, поэтому база с v1+v3 получит v2 при обновлении. Таблицы независимы.
         migrator.registerMigration("v3") { db in
             // Фото сообщений. Отдельная таблица: запись стрима (`updateMessage`) не трогает
             // строки с BLOB, а история читает фото только нужных сообщений.

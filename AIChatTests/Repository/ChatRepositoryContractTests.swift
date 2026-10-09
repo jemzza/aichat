@@ -55,6 +55,28 @@ private func message(_ repository: any ChatRepository, _ chat: Chat, id: UUID) a
     try await messages(repository, chat).first { $0.id == id }
 }
 
+@discardableResult
+private func seedFolder(_ repository: any ChatRepository, _ name: String = "Folder",
+                        at seconds: TimeInterval = 0) async throws -> UUID {
+    let id = UUID()
+    try await repository.createFolder(id: id, name: name, createdAt: at(seconds))
+    return id
+}
+
+private func sidebar(_ repository: any ChatRepository,
+                     where predicate: @escaping @Sendable (SidebarSnapshot) -> Bool = { _ in true }) async throws -> SidebarSnapshot {
+    try await firstValue(of: repository.observeSidebar(), where: predicate)
+}
+
+private extension SidebarSnapshot {
+    var folderIds: [UUID] { folders.map(\.folder.id) }
+    var positions: [Int] { folders.map(\.folder.position) }
+
+    func chatIds(in folderId: UUID) -> [UUID]? {
+        folders.first { $0.id == folderId }?.chats.map(\.id)
+    }
+}
+
 @Suite("ChatRepository contract")
 struct ChatRepositoryContractTests {
 
@@ -346,6 +368,189 @@ struct ChatRepositoryContractTests {
         #expect(try await message(repository, chatA, id: streamingA.id)?.status == .interrupted)
         #expect(try await message(repository, chatB, id: streamingB.id)?.status == .interrupted)
         #expect(try await message(repository, chatB, id: done.id)?.status == .done)
+    }
+
+    // MARK: Папки и сайдбар
+
+    @Test(arguments: RepositoryKind.allCases)
+    func sidebarStartsEmptyAndNewChatGoesToRecents(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        #expect(try await sidebar(repository) == .empty)
+
+        let (chat, _) = try await seedChat(repository)
+
+        let snapshot = try await sidebar(repository) { !$0.recents.isEmpty }
+        #expect(snapshot.recents.map(\.id) == [chat.id])
+        #expect(snapshot.recents.first?.folderId == nil)
+        #expect(snapshot.folders.isEmpty)
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func foldersKeepCreationOrderAndCanBeMoved(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let a = try await seedFolder(repository, "A", at: 0)
+        let b = try await seedFolder(repository, "B", at: 1)
+        let c = try await seedFolder(repository, "C", at: 2)
+        var snapshot = try await sidebar(repository) { $0.folders.count == 3 }
+        #expect(snapshot.folderIds == [a, b, c])
+        #expect(snapshot.positions == [0, 1, 2])
+        #expect(snapshot.folders.allSatisfy { $0.chats.isEmpty })
+
+        try await repository.moveFolder(id: c, to: 0)
+        snapshot = try await sidebar(repository) { $0.folderIds.first == c }
+        #expect(snapshot.folderIds == [c, a, b])
+
+        try await repository.moveFolder(id: c, to: 1)
+        snapshot = try await sidebar(repository) { $0.folderIds == [a, c, b] }
+        #expect(snapshot.positions == [0, 1, 2])
+
+        // За краями — зажимается.
+        try await repository.moveFolder(id: a, to: 99)
+        snapshot = try await sidebar(repository) { $0.folderIds == [c, b, a] }
+        try await repository.moveFolder(id: a, to: -5)
+        snapshot = try await sidebar(repository) { $0.folderIds == [a, c, b] }
+        #expect(snapshot.positions == [0, 1, 2])
+
+        let unknown = UUID()
+        await #expect(throws: FolderNotFound(id: unknown)) {
+            try await repository.moveFolder(id: unknown, to: 0)
+        }
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func renameFolder(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let folder = try await seedFolder(repository, "Work")
+
+        try await repository.renameFolder(id: folder, name: "Projects")
+
+        let snapshot = try await sidebar(repository) { $0.folders.first?.folder.name == "Projects" }
+        #expect(snapshot.folders.count == 1)
+        let unknown = UUID()
+        await #expect(throws: FolderNotFound(id: unknown)) {
+            try await repository.renameFolder(id: unknown, name: "Gone")
+        }
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func moveChatBetweenFolderAndRecents(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let folder = try await seedFolder(repository)
+        let (chat, _) = try await seedChat(repository, title: "Moved", at: 0)
+        let (other, _) = try await seedChat(repository, title: "Stays", at: 1)
+
+        try await repository.moveChat(id: chat.id, toFolder: folder)
+
+        var snapshot = try await sidebar(repository) { $0.chatIds(in: folder) == [chat.id] }
+        #expect(snapshot.recents.map(\.id) == [other.id])
+        let moved = snapshot.folders.first?.chats.first
+        #expect(moved?.folderId == folder)
+        #expect(moved?.updatedAt == at(0))
+        // observeChats по-прежнему видит все чаты.
+        let all = try await firstValue(of: repository.observeChats()) { $0.count == 2 }
+        #expect(Set(all.map(\.id)) == [chat.id, other.id])
+
+        try await repository.moveChat(id: chat.id, toFolder: nil)
+
+        snapshot = try await sidebar(repository) { $0.recents.count == 2 }
+        #expect(snapshot.recents.map(\.id) == [other.id, chat.id])
+        #expect(snapshot.chatIds(in: folder) == [])
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func chatsInFolderAreSortedByLastActivity(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let folder = try await seedFolder(repository)
+        let (older, _) = try await seedChat(repository, title: "Older", at: 0)
+        let (newer, _) = try await seedChat(repository, title: "Newer", at: 10)
+        try await repository.moveChat(id: older.id, toFolder: folder)
+        try await repository.moveChat(id: newer.id, toFolder: folder)
+        _ = try await sidebar(repository) { $0.chatIds(in: folder) == [newer.id, older.id] }
+
+        try await repository.insertMessage(reply(older, at: 20))
+
+        let snapshot = try await sidebar(repository) { $0.chatIds(in: folder) == [older.id, newer.id] }
+        #expect(snapshot.recents.isEmpty)
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func moveChatRejectsUnknownChatOrFolder(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let folder = try await seedFolder(repository)
+        let (chat, _) = try await seedChat(repository)
+
+        let unknownChat = UUID()
+        await #expect(throws: ChatNotFound(id: unknownChat)) {
+            try await repository.moveChat(id: unknownChat, toFolder: folder)
+        }
+        let unknownFolder = UUID()
+        await #expect(throws: FolderNotFound(id: unknownFolder)) {
+            try await repository.moveChat(id: chat.id, toFolder: unknownFolder)
+        }
+
+        let snapshot = try await sidebar(repository)
+        #expect(snapshot.recents.map(\.id) == [chat.id])
+        #expect(snapshot.chatIds(in: folder) == [])
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func deleteFolderReturnsChatsToRecentsAndIsIdempotent(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let first = try await seedFolder(repository, "First")
+        let doomed = try await seedFolder(repository, "Doomed")
+        let last = try await seedFolder(repository, "Last")
+        let (chat, message) = try await seedChat(repository)
+        try await repository.moveChat(id: chat.id, toFolder: doomed)
+        _ = try await sidebar(repository) { $0.chatIds(in: doomed) == [chat.id] }
+
+        try await repository.deleteFolder(id: doomed)
+        try await repository.deleteFolder(id: doomed)
+
+        let snapshot = try await sidebar(repository) { $0.folders.count == 2 }
+        #expect(snapshot.folderIds == [first, last])
+        #expect(snapshot.positions == [0, 1])
+        #expect(snapshot.recents.map(\.id) == [chat.id])
+        #expect(snapshot.recents.first?.folderId == nil)
+        #expect(try await messages(repository, chat) == [message])
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func deletingChatInFolderKeepsFolder(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let folder = try await seedFolder(repository)
+        let (chat, _) = try await seedChat(repository)
+        try await repository.moveChat(id: chat.id, toFolder: folder)
+        _ = try await sidebar(repository) { $0.chatIds(in: folder) == [chat.id] }
+
+        try await repository.deleteChat(id: chat.id)
+
+        let snapshot = try await sidebar(repository) { $0.chatIds(in: folder) == [] }
+        #expect(snapshot.folderIds == [folder])
+        #expect(snapshot.recents.isEmpty)
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
+    func insertChatIntoFolder(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let folder = try await seedFolder(repository)
+        var draft = makeChat()
+        draft.folderId = folder
+        let chat = draft
+
+        try await repository.insertChat(chat, firstMessage: userMessage(chat))
+
+        let snapshot = try await sidebar(repository) { $0.chatIds(in: folder) == [chat.id] }
+        #expect(snapshot.recents.isEmpty)
+
+        let unknown = UUID()
+        var orphanDraft = makeChat("Orphan")
+        orphanDraft.folderId = unknown
+        let orphan = orphanDraft
+        await #expect(throws: FolderNotFound(id: unknown)) {
+            try await repository.insertChat(orphan, firstMessage: userMessage(orphan))
+        }
+        let chats = try await firstValue(of: repository.observeChats())
+        #expect(chats.map(\.id) == [chat.id])
     }
 
     // MARK: Фото

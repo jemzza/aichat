@@ -38,6 +38,13 @@ targets:
       path: AIChat/Info.plist
       properties:
         CFBundleDisplayName: AI Chat
+        # Свой тип для перетаскивания чата в папку (ChatDragItem).
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.example.aichat.chat-reference
+            UTTypeDescription: AI Chat conversation
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification: {}
         UILaunchScreen: {}
         NSMicrophoneUsageDescription: Dictation uses the microphone to turn your speech into text. Audio is processed on this device and never saved.
         NSSpeechRecognitionUsageDescription: Dictation turns your speech into text in the message field. It works on this device when your language supports it; otherwise speech is sent to Apple for recognition.
@@ -74,12 +81,27 @@ targets:
         SUPPORTS_MACCATALYST: YES
         GENERATE_INFOPLIST_FILE: YES
 
+  # UI-тесты: сценарии через настоящие алерты и меню (`-mockData`).
+  AIChatUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: AIChatUITests
+    dependencies:
+      - target: AIChat
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.aichat.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   AIChat:
     build:
       targets:
         AIChat: all
         AIChatTests: [test]
+        AIChatUITests: [test]
     test:
       targets:
         - AIChatTests
+        - AIChatUITests

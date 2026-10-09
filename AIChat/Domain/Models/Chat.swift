@@ -8,4 +8,6 @@ struct Chat: Identifiable, Hashable, Sendable {
     let createdAt: Date
     /// Время последнего сообщения — обновляет репозиторий.
     var updatedAt: Date
+    /// Папка; `nil` — чат в «Recents».
+    var folderId: UUID? = nil
 }

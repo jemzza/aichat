@@ -62,6 +62,16 @@ final class RecordingRepository: ChatRepository {
     }
     func renameChat(id: UUID, title: String) async throws { try await base.renameChat(id: id, title: title) }
     func deleteChat(id: UUID) async throws { try await base.deleteChat(id: id) }
+    func observeSidebar() -> AsyncStream<SidebarSnapshot> { base.observeSidebar() }
+    func moveChat(id: UUID, toFolder folderId: UUID?) async throws {
+        try await base.moveChat(id: id, toFolder: folderId)
+    }
+    func createFolder(id: UUID, name: String, createdAt: Date) async throws {
+        try await base.createFolder(id: id, name: name, createdAt: createdAt)
+    }
+    func renameFolder(id: UUID, name: String) async throws { try await base.renameFolder(id: id, name: name) }
+    func deleteFolder(id: UUID) async throws { try await base.deleteFolder(id: id) }
+    func moveFolder(id: UUID, to index: Int) async throws { try await base.moveFolder(id: id, to: index) }
     func insertMessage(_ message: Message) async throws { try await base.insertMessage(message) }
     func updateMessage(id: UUID, text: String, status: MessageStatus, failure: MessageFailure?) async throws {
         updates.withLock { $0.append(status) }

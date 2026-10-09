@@ -66,5 +66,24 @@ enum PreviewData {
     static func repository() -> InMemoryChatRepository {
         InMemoryChatRepository(chats: chats, messages: messages)
     }
+
+    // MARK: Папки — для превью сайдбара
+
+    static let travelFolder = Folder(id: UUID(), name: "Travel", position: 0, createdAt: now.addingTimeInterval(-500_000))
+    static let workFolder = Folder(id: UUID(), name: "Work", position: 1, createdAt: now.addingTimeInterval(-400_000))
+    static let emptyFolder = Folder(id: UUID(), name: "Ideas", position: 2, createdAt: now.addingTimeInterval(-300_000))
+    static let folders = [travelFolder, workFolder, emptyFolder]
+
+    /// Те же чаты, но «Trip ideas» лежит в «Travel», «Swift concurrency basics» — в «Work»,
+    /// «Ideas» пустая, остальные — в «Recents».
+    static func repositoryWithFolders() -> InMemoryChatRepository {
+        let placement = [errorsChat.id: travelFolder.id, swiftChat.id: workFolder.id]
+        let placed = chats.map { chat in
+            var chat = chat
+            chat.folderId = placement[chat.id]
+            return chat
+        }
+        return InMemoryChatRepository(folders: folders, chats: placed, messages: messages)
+    }
 }
 #endif
