@@ -62,6 +62,7 @@ final class RecordingRepository: ChatRepository {
     }
     func renameChat(id: UUID, title: String) async throws { try await base.renameChat(id: id, title: title) }
     func deleteChat(id: UUID) async throws { try await base.deleteChat(id: id) }
+    func deleteAll() async throws { try await base.deleteAll() }
     func observeSidebar() -> AsyncStream<SidebarSnapshot> { base.observeSidebar() }
     func moveChat(id: UUID, toFolder folderId: UUID?) async throws {
         try await base.moveChat(id: id, toFolder: folderId)

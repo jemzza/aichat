@@ -515,6 +515,36 @@ struct ChatRepositoryContractTests {
     }
 
     @Test(arguments: RepositoryKind.allCases)
+    func deleteAllRemovesChatsFoldersAndMessages(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let folder = try await seedFolder(repository)
+        let (chat, first) = try await seedChat(repository)
+        let photo = Message(chatId: chat.id, role: .user, text: "Look", status: .pending,
+                            images: [ImageAttachment(jpegData: Data([1, 2]))], createdAt: at(2))
+        try await repository.insertMessage(photo)
+        try await repository.moveChat(id: chat.id, toFolder: folder)
+        let (other, _) = try await seedChat(repository, title: "Other", at: 1)
+        _ = try await sidebar(repository) { $0.chatIds(in: folder) == [chat.id] && $0.recents.count == 1 }
+
+        try await repository.deleteAll()
+        try await repository.deleteAll()
+
+        let snapshot = try await sidebar(repository) { $0.folders.isEmpty && $0.recents.isEmpty }
+        #expect(snapshot.folderIds.isEmpty)
+        #expect(try await firstValue(of: repository.observeChats()) { $0.isEmpty }.isEmpty)
+        #expect(try await messages(repository, chat).isEmpty)
+        #expect(try await messages(repository, other).isEmpty)
+        #expect(try await repository.pendingMessages().isEmpty)
+        await #expect(throws: MessageNotFound(id: first.id)) {
+            try await repository.updateMessage(id: first.id, text: "x", status: .sent, failure: nil)
+        }
+        // После очистки репозиторий работает как новый.
+        try await seedChat(repository, title: "Fresh", at: 3)
+        let chats = try await firstValue(of: repository.observeChats()) { $0.count == 1 }
+        #expect(chats.map(\.title) == ["Fresh"])
+    }
+
+    @Test(arguments: RepositoryKind.allCases)
     func deletingChatInFolderKeepsFolder(kind: RepositoryKind) async throws {
         let repository = kind.make()
         let folder = try await seedFolder(repository)

@@ -160,7 +160,7 @@ iOS 18 и iOS 26.
 отправляются уведомления и как нажатие на уведомление открывает чат; код — после
 согласования. `#Preview` для всех экранов в светлой и тёмной теме.
 
-- [ ] 9.A Данные. `SettingsStore` (`@Observable`, поверх `UserDefaults`):
+- [x] 9.A Данные. `SettingsStore` (`@Observable`, поверх `UserDefaults`):
       `appearance`, `notifyOnReply`, `notifyOnQueuedSent`; протокол в Domain,
       фейк в `Mocks/`. Решение «настройки в `UserDefaults`, не в БД» — в таблицу
       решений `docs/task.md`. `ChatRepository.deleteAll()` в GRDB и фейке.

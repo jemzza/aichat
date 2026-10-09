@@ -162,6 +162,16 @@ final class InMemoryChatRepository: ChatRepository {
         }
     }
 
+    func deleteAll() {
+        state.withLock { state in
+            let chatIds = Set(state.chats.keys)
+            state.chats = [:]
+            state.folders = [:]
+            state.messages = [:]
+            state.notify(chatIds: chatIds, chatsChanged: true, foldersChanged: true)
+        }
+    }
+
     func moveChat(id: UUID, toFolder folderId: UUID?) throws {
         try state.withLock { state in
             guard state.chats[id] != nil else { throw ChatNotFound(id: id) }
