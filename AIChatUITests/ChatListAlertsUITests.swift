@@ -12,24 +12,17 @@ final class ChatListAlertsUITests: XCTestCase {
     }
 
     func testRenameAndDeleteThroughAlerts() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["-mockData"]
-        app.launch()
-
-        app.buttons["Show sidebar"].tap()
+        let app = XCUIApplication.launchWithMockData()
+        app.openSidebar()
 
         // Переименование: контекстное меню → алерт с полем → «Save».
         let chat = app.buttons["Trip ideas"]
         XCTAssertTrue(chat.waitForExistence(timeout: timeout))
-        chat.press(forDuration: 1.2)
-        app.buttons["Rename"].tap()
+        app.contextMenuItem("Rename", on: chat).tap()
 
         let field = app.alerts.textFields.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: timeout))
-        field.tap()
-        let current = field.value as? String ?? ""
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
-        field.typeText("Lisbon weekend")
+        app.replaceText(in: field, with: "Lisbon weekend")
         app.alerts.buttons["Save"].tap()
 
         XCTAssertTrue(app.buttons["Lisbon weekend"].waitForExistence(timeout: timeout))
@@ -38,15 +31,12 @@ final class ChatListAlertsUITests: XCTestCase {
         // Удаление: контекстное меню → подтверждение → чата нет.
         let doomed = app.buttons["Recipe for pancakes"]
         XCTAssertTrue(doomed.exists)
-        doomed.press(forDuration: 1.2)
-        app.buttons["Delete"].tap()
+        app.contextMenuItem("Delete", on: doomed).tap()
 
-        let confirm = app.sheets.buttons["Delete"].firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: timeout))
+        let confirm = app.confirmationButton("Delete")
+        XCTAssertTrue(confirm.exists)
         confirm.tap()
 
-        let gone = NSPredicate(format: "exists == false")
-        expectation(for: gone, evaluatedWith: doomed)
-        waitForExpectations(timeout: timeout)
+        XCTAssertTrue(waitForDisappearance(of: doomed, timeout: timeout))
     }
 }
