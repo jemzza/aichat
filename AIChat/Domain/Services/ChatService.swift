@@ -150,6 +150,12 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
         try await repository.deleteChat(id: id)
     }
 
+    func deleteAll() async throws {
+        // Запоздалые записи отменённых генераций получат `MessageNotFound` — их глотаем в `generate`.
+        for generation in generations.values { generation.task?.cancel() }
+        try await repository.deleteAll()
+    }
+
     // MARK: Outbox
 
     /// Отправляет `pending` по очереди: следующий — после того, как ответ на предыдущий готов.

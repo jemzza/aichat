@@ -40,6 +40,9 @@ protocol ChatSession: AnyObject {
 
     /// Удаляет чат и отменяет его генерацию, если она идёт.
     func deleteChat(id: UUID) async throws
+
+    /// «Delete all chats»: отменяет все генерации и удаляет все чаты, папки и сообщения.
+    func deleteAll() async throws
 }
 
 extension ChatSession {

@@ -7,13 +7,31 @@ struct SidebarView: View {
     @Bindable var viewModel: ChatListViewModel
     /// Вызывается после выбора чата или «New chat» — iPhone закрывает панель.
     var onNavigate: () -> Void = {}
+    /// Шестерёнка внизу — настройки.
+    var onOpenSettings: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
             header
             content
+            footer
         }
         .background(.appBackground)
+    }
+
+    private var footer: some View {
+        HStack {
+            Button("Settings", systemImage: "gearshape", action: onOpenSettings)
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+                .contentShape(.rect)
+                .buttonStyle(.plain)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 
     private var header: some View {

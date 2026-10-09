@@ -97,6 +97,11 @@ final class PreviewChatSession: ChatSession {
         try await repository.deleteChat(id: id)
     }
 
+    func deleteAll() async throws {
+        for generation in generations.values { generation.task.cancel() }
+        try await repository.deleteAll()
+    }
+
     // MARK: Генерация
 
     private func draft(chatId: UUID) -> StreamingDraft? {
@@ -167,7 +172,9 @@ final class PreviewChatSession: ChatSession {
 extension ChatDependencies {
     static func preview(
         repository: any ChatRepository = PreviewData.repository(),
-        connectivity: any ConnectivityMonitoring = FakeConnectivityMonitor(isOnline: true)
+        connectivity: any ConnectivityMonitoring = FakeConnectivityMonitor(isOnline: true),
+        settings: any SettingsStoring = InMemorySettingsStore(),
+        permissions: any PermissionStatusProviding = FakePermissionStatus()
     ) -> ChatDependencies {
         ChatDependencies(
             repository: repository,
@@ -177,7 +184,10 @@ extension ChatDependencies {
             recorder: FakeVoiceRecorder(),
             transcriber: FakeSpeechTranscriber(),
             prepareImage: { ImageDownscaler.jpeg(from: $0) },
-            modelName: "Groq · gpt-oss-120b"
+            modelName: "Groq · gpt-oss-120b",
+            settings: settings,
+            permissions: permissions,
+            openAppSettings: {}
         )
     }
 }

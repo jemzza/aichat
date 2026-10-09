@@ -1,5 +1,6 @@
 import Foundation
 import Speech
+import UIKit
 
 /// Какие реализации собрать. По умолчанию — только реальные; каждый фейк включается
 /// только своим DEBUG launch-аргументом (в Release `LaunchOptions` всегда `.none`).
@@ -94,9 +95,17 @@ extension AppContainer {
             recorder: dictation.recorder,
             transcriber: dictation.transcriber,
             prepareImage: { ImageDownscaler.jpeg(from: $0) },
-            modelName: provider.displayName
+            modelName: provider.displayName,
+            settings: settings,
+            permissions: SystemPermissionStatus(),
+            openAppSettings: Self.openAppSettings
         )
         return (dependencies, service)
+    }
+
+    private static func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 
     private func makeRepository(_ storage: DependencyPlan.Storage) async throws -> any ChatRepository {

@@ -166,7 +166,7 @@ iOS 18 и iOS 26.
       решений `docs/task.md`. `ChatRepository.deleteAll()` в GRDB и фейке.
       Тесты: значения по умолчанию и сохранение `SettingsStore`, `deleteAll`
       в контрактных тестах. Сборка, коммит.
-- [ ] 9.B Экран Settings. Шестерёнка внизу сайдбара → sheet (iPhone `.large`,
+- [x] 9.B Экран Settings. Шестерёнка внизу сайдбара → sheet (iPhone `.large`,
       iPad/Mac — form sheet). Шапка с круглой ✕; секция «General»
       (Notifications, Privacy), секция «Appearance» — карточки Light / Dark /
       System с мини-превью (System разделён по диагонали), выбранная — обводка
@@ -360,3 +360,10 @@ _Сюда записываем, что пошло не так и что реши
   `migrationFromV1KeepsDataAndAddsAttachments` вставлял `ChatRecord` в базу на v1 —
   теперь сырым SQL (у записи есть `folderId` из v2). Строкам папок добавлен русский
   перевод (`LocalizationTests` из 6.4 требует его для всех строк).
+- 9.B (ветка `feat/settings`): «назад» на подэкранах настроек — системная кнопка
+  без подписи (`.toolbarRole(.editor)`), а не своя круглая: на iOS 26 она и так
+  круглая (Liquid Glass), а свайп «назад» и VoiceOver работают без своего кода; на
+  iOS 18 — шеврон без круга. ✕ на главном экране настроек — своя круглая кнопка на
+  iOS 18, на iOS 26 круг рисует панель. После «Delete all chats» настройки
+  закрываются — пользователь сразу видит пустой список. Строка «Notifications» в
+  «General» появится в 9.C вместе с подэкраном.

@@ -7,6 +7,7 @@ struct RootView: View {
     @State private var chatList: ChatListViewModel
     @State private var connectivity: ConnectivityStatus
     @State private var isSidebarOpen = false
+    @State private var isSettingsPresented = false
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -26,15 +27,20 @@ struct RootView: View {
             }
         }
         .chatListAlerts(chatList)
+        .sheet(isPresented: $isSettingsPresented) {
+            SettingsView(dependencies: dependencies)
+                .presentationDetents([.large])
+                .presentationSizing(.form)
+        }
         .task { await chatList.observe() }
         .task { await connectivity.observe() }
     }
 
     private var drawerLayout: some View {
         SideDrawer(isOpen: $isSidebarOpen) {
-            SidebarView(viewModel: chatList) {
-                withAnimation(.snappy) { isSidebarOpen = false }
-            }
+            SidebarView(viewModel: chatList,
+                        onNavigate: { withAnimation(.snappy) { isSidebarOpen = false } },
+                        onOpenSettings: { isSettingsPresented = true })
         } content: {
             chatScreen {
                 withAnimation(.snappy) { isSidebarOpen.toggle() }
@@ -47,7 +53,7 @@ struct RootView: View {
 
     private var splitLayout: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(viewModel: chatList)
+            SidebarView(viewModel: chatList, onOpenSettings: { isSettingsPresented = true })
                 .toolbar(.hidden, for: .navigationBar)
         } detail: {
             chatScreen {
@@ -101,15 +107,11 @@ private struct ChatScreenContent: View {
                                                        recorder: dependencies.recorder,
                                                        transcriber: dependencies.transcriber,
                                                        prepareImage: dependencies.prepareImage,
-                                                       openSettings: Self.openAppSettings))
+                                                       openSettings: dependencies.openAppSettings))
     }
 
     var body: some View {
         ChatView(viewModel: viewModel)
-    }
-    private static func openAppSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
     }
 }
 

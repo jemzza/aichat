@@ -12,6 +12,7 @@ struct AIChatApp: App {
             switch container.environment {
             case .live:
                 LiveRoot(container: container)
+                    .windowAppearance(container.settings.appearance)
             case .unitTests:
                 EmptyView()
             }

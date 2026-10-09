@@ -335,6 +335,23 @@ struct ChatServiceTests {
         #expect(chats.isEmpty)
     }
 
+    @Test func deleteAllCancelsEveryGenerationAndEmptiesRepository() async throws {
+        let harness = try makeHarness(script: .hang)
+        let first = try await harness.service.send("One", inChat: nil)
+        let second = try await harness.service.send("Two", inChat: nil)
+        #expect(harness.service.isGenerating(chatId: first))
+        #expect(harness.service.isGenerating(chatId: second))
+
+        try await harness.service.deleteAll()
+
+        try await waitUntil {
+            !harness.service.isGenerating(chatId: first) && !harness.service.isGenerating(chatId: second)
+        }
+        #expect(try await firstValue(of: harness.repository.observeChats()).isEmpty)
+        #expect(try await harness.repository.pendingMessages().isEmpty)
+        #expect(harness.backgroundTasks.activeCount == 0)
+    }
+
     /// Чат удалили в обход сервиса — запоздавшая запись получает `MessageNotFound` и глотается.
     @Test func lateWriteToDeletedChatIsSwallowed() async throws {
         let harness = try makeHarness(script: .hang)
