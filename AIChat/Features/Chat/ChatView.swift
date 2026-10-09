@@ -9,6 +9,7 @@ struct ChatView: View {
     /// Последнее известное «у нижнего края» — применяется, когда пользователь отпустил ленту.
     @State private var isNearBottom = true
     @State private var isUserScrolling = false
+    @FocusState private var isComposerFocused: Bool
 
     /// Насколько можно не доскроллить до конца и всё ещё считаться «внизу».
     private let bottomTolerance: CGFloat = 48
@@ -26,6 +27,11 @@ struct ChatView: View {
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
         .scrollDismissesKeyboard(.interactively)
+        // Тап по ленте прячет клавиатуру. Жест на `ScrollView`, а не поверх экрана:
+        // у детей приоритет — кнопки, ссылки, выделение и контекстное меню сообщений
+        // срабатывают сами; кнопка «вниз», пустой экран и поле ввода добавлены ниже
+        // (overlay/inset), этот жест их не накрывает.
+        .onTapGesture { isComposerFocused = false }
         .onScrollGeometryChange(for: Bool.self) { geometry in
             geometry.visibleRect.maxY >= geometry.contentSize.height + geometry.contentInsets.bottom - bottomTolerance
         } action: { _, isNearBottom in
@@ -64,6 +70,7 @@ struct ChatView: View {
                 EmptyChatView(greeting: viewModel.greeting, suggestions: viewModel.suggestions) { suggestion in
                     Task { await viewModel.send(suggestion: suggestion) }
                 }
+                .onTapGesture { isComposerFocused = false }
                 .background(.appBackground)
                 .transition(.opacity)
             }
@@ -77,7 +84,8 @@ struct ChatView: View {
                 dictation: composerDictation,
                 attachments: composerAttachments,
                 onSend: send,
-                onStop: { viewModel.stop() }
+                onStop: { viewModel.stop() },
+                isFocused: $isComposerFocused
             )
         }
         .background(.appBackground)

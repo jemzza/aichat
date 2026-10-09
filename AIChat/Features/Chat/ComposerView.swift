@@ -41,8 +41,9 @@ struct ComposerView: View {
     var attachments: ComposerAttachments?
     let onSend: () -> Void
     let onStop: () -> Void
+    /// Фокус поля ввода принадлежит экрану чата: он снимает его тапом по ленте.
+    var isFocused: FocusState<Bool>.Binding
 
-    @FocusState private var isFocused: Bool
     @State private var sendCount = 0
     @State private var stopCount = 0
 
@@ -74,7 +75,7 @@ struct ComposerView: View {
             TextField("Message…", text: $text, axis: .vertical)
                 .lineLimit(1...6)
                 .textStyle(.userMessage)
-                .focused($isFocused)
+                .focused(isFocused)
                 .padding(.horizontal, 4)
                 .padding(.top, 4)
 
@@ -110,7 +111,7 @@ struct ComposerView: View {
                               lineWidth: isRecording ? 1.5 : 1)
         }
         .contentShape(.rect(cornerRadius: 24))
-        .onTapGesture { isFocused = true }
+        .onTapGesture { isFocused.wrappedValue = true }
         .padding(.horizontal, 12)
     }
 
@@ -369,21 +370,22 @@ private struct ComposerPreview: View {
     @State private var empty = ""
     @State private var filled = "What is an actor in Swift?"
     @State private var long = (1...8).map { "Line \($0)" }.joined(separator: "\n")
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            ComposerView(text: $empty, isGenerating: false, canSend: false, onSend: {}, onStop: {})
-            ComposerView(text: $filled, isGenerating: false, canSend: true, onSend: {}, onStop: {})
-            ComposerView(text: $filled, isGenerating: true, canSend: false, onSend: {}, onStop: {})
-            ComposerView(text: $long, isGenerating: false, canSend: true, onSend: {}, onStop: {})
+            ComposerView(text: $empty, isGenerating: false, canSend: false, onSend: {}, onStop: {}, isFocused: $isFocused)
+            ComposerView(text: $filled, isGenerating: false, canSend: true, onSend: {}, onStop: {}, isFocused: $isFocused)
+            ComposerView(text: $filled, isGenerating: true, canSend: false, onSend: {}, onStop: {}, isFocused: $isFocused)
+            ComposerView(text: $long, isGenerating: false, canSend: true, onSend: {}, onStop: {}, isFocused: $isFocused)
             ComposerView(text: $filled, isGenerating: false, canSend: true,
-                         dictation: ComposerDictation(state: .recording, duration: .seconds(3), level: 0.6), onSend: {}, onStop: {})
+                         dictation: ComposerDictation(state: .recording, duration: .seconds(3), level: 0.6), onSend: {}, onStop: {}, isFocused: $isFocused)
             ComposerView(text: $empty, isGenerating: false, canSend: true, dictation: ComposerDictation(),
-                         attachments: ComposerAttachments(isPreparing: true), onSend: {}, onStop: {})
+                         attachments: ComposerAttachments(isPreparing: true), onSend: {}, onStop: {}, isFocused: $isFocused)
             ComposerView(text: $empty, isGenerating: false, canSend: false,
                          dictation: ComposerDictation(state: .unavailable(.microphoneDenied), canOpenSettings: true),
-                         onSend: {}, onStop: {})
+                         onSend: {}, onStop: {}, isFocused: $isFocused)
         }
         .background(.appBackground)
     }

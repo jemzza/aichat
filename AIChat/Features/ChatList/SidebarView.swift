@@ -10,13 +10,26 @@ struct SidebarView: View {
     /// Шестерёнка внизу — настройки.
     var onOpenSettings: () -> Void = {}
 
+    @FocusState private var isSearchFocused: Bool
+
     var body: some View {
         VStack(spacing: 0) {
             header
             content
+                .frame(maxHeight: .infinity)
+                // Тап мимо поиска прячет клавиатуру. Строки чатов и папок — кнопки,
+                // у детей приоритет, этот жест им не мешает.
+                .contentShape(.rect)
+                .onTapGesture { isSearchFocused = false }
             footer
         }
         .background(.appBackground)
+    }
+
+    /// Выбор чата закрывает панель на iPhone — клавиатура поиска не должна остаться над чатом.
+    private func navigate() {
+        isSearchFocused = false
+        onNavigate()
     }
 
     private var footer: some View {
@@ -36,11 +49,11 @@ struct SidebarView: View {
 
     private var header: some View {
         VStack(spacing: 12) {
-            SearchField(text: $viewModel.searchText)
+            SearchField(text: $viewModel.searchText, isFocused: $isSearchFocused)
 
             Button {
                 viewModel.startNewChat()
-                onNavigate()
+                navigate()
             } label: {
                 Label("New chat", systemImage: "square.and.pencil")
                     .font(.body.weight(.medium))
@@ -83,7 +96,7 @@ struct SidebarView: View {
                     }
                 }
                 ForEach(viewModel.folderSections) { item in
-                    FolderSection(item: item, viewModel: viewModel, onNavigate: onNavigate)
+                    FolderSection(item: item, viewModel: viewModel, onNavigate: navigate)
                 }
                 if !viewModel.isSearching || !viewModel.sections.isEmpty {
                     RecentsHeader(viewModel: viewModel)
@@ -97,14 +110,14 @@ struct SidebarView: View {
                         .padding(.bottom, 4)
                         .accessibilityAddTraits(.isHeader)
                     ForEach(section.chats) { chat in
-                        ChatRow(chat: chat, viewModel: viewModel, onNavigate: onNavigate)
+                        ChatRow(chat: chat, viewModel: viewModel, onNavigate: navigate)
                     }
                 }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 16)
         }
-        .scrollDismissesKeyboard(.immediately)
+        .scrollDismissesKeyboard(.interactively)
     }
 }
 
@@ -151,12 +164,14 @@ private struct RecentsHeader: View {
 
 private struct SearchField: View {
     @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
             TextField("Search", text: $text)
+                .focused(isFocused)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)

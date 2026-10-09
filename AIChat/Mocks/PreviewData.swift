@@ -32,6 +32,8 @@ enum PreviewData {
                 func increment() { value += 1 }
             }
             ```
+
+            More in [The Swift Programming Language](https://docs.swift.org/swift-book/).
             """, status: .done, createdAt: now.addingTimeInterval(-590)),
         Message(chatId: swiftChat.id, role: .user, text: "And how is it different from a class with a lock?",
                 status: .sent, createdAt: now.addingTimeInterval(-550)),
