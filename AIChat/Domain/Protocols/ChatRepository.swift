@@ -25,6 +25,8 @@ protocol ChatRepository: Sendable {
     /// Переносит чат в папку; `folderId == nil` — в «Recents». `updatedAt` не меняется.
     /// - Throws: `ChatNotFound`, `FolderNotFound` (чат при этом остаётся где был).
     func moveChat(id: UUID, toFolder folderId: UUID?) async throws
+    /// Удаляет все чаты, папки, сообщения и вложения одной транзакцией («Delete all chats»).
+    func deleteAll() async throws
 
     // MARK: Папки
 

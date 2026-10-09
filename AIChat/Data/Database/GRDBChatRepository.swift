@@ -92,6 +92,14 @@ final class GRDBChatRepository: ChatRepository {
         }
     }
 
+    func deleteAll() async throws {
+        // Сообщения и вложения удаляет `ON DELETE CASCADE`.
+        try await writer.write { db in
+            _ = try ChatRecord.deleteAll(db)
+            _ = try FolderRecord.deleteAll(db)
+        }
+    }
+
     func moveChat(id: UUID, toFolder folderId: UUID?) async throws {
         try await writer.write { db in
             guard try ChatRecord.exists(db, key: id) else { throw ChatNotFound(id: id) }

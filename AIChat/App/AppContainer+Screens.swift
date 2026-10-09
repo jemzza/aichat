@@ -1,5 +1,6 @@
 import Foundation
 import Speech
+import UIKit
 
 /// Какие реализации собрать. По умолчанию — только реальные; каждый фейк включается
 /// только своим DEBUG launch-аргументом (в Release `LaunchOptions` всегда `.none`).
@@ -78,12 +79,21 @@ extension AppContainer {
         let connectivity = makeConnectivity(plan.network)
         let provider = makeProvider(plan.model)
         let dictation = makeDictation(plan.dictation, connectivity: connectivity)
+        let notifications = UserNotificationScheduler()
+        let notificationService = NotificationService(
+            settings: settings,
+            scheduler: notifications,
+            activity: UIKitAppActivity(),
+            repository: repository,
+            plainText: { SpeechText.make(fromMarkdown: $0) }
+        )
         let service = ChatService(
             repository: repository,
             provider: provider,
             onDeviceProvider: makeOnDeviceProvider(plan.onDeviceModel),
             connectivity: connectivity,
             backgroundTasks: UIKitBackgroundTasks(),
+            eventHandler: notificationService,
             clock: ContinuousClock()
         )
         let dependencies = ChatDependencies(
@@ -94,9 +104,18 @@ extension AppContainer {
             recorder: dictation.recorder,
             transcriber: dictation.transcriber,
             prepareImage: { ImageDownscaler.jpeg(from: $0) },
-            modelName: provider.displayName
+            modelName: provider.displayName,
+            settings: settings,
+            notifications: notifications,
+            permissions: SystemPermissionStatus(),
+            openAppSettings: Self.openAppSettings
         )
         return (dependencies, service)
+    }
+
+    private static func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 
     private func makeRepository(_ storage: DependencyPlan.Storage) async throws -> any ChatRepository {

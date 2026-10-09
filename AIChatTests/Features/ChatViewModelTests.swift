@@ -24,6 +24,8 @@ private final class ManualChatSession: ChatSession {
         deletedChatIds.append(id)
     }
 
+    func deleteAll() async throws {}
+
     var sendResult: Result<UUID, Error> = .success(UUID())
     private(set) var sent: [(text: String, chatId: UUID?)] = []
     private(set) var sentImages: [[ImageAttachment]] = []

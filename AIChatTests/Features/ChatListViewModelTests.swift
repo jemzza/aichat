@@ -72,6 +72,20 @@ struct ChatListViewModelTests {
         #expect(viewModel.sections.map { $0.chats.map(\.title) } == [["Fresh"], ["Last week"], ["Old"]])
     }
 
+    @Test func openChatFromNotificationSelectsExistingChatOnly() async throws {
+        let target = Self.chat("Target", daysAgo: 1)
+        let (viewModel, _, observation) = try await makeViewModel(chats: [Self.chat("Other", daysAgo: 0), target])
+        defer { observation.cancel() }
+        viewModel.searchText = "oth"
+
+        viewModel.openChat(id: target.id)
+        #expect(viewModel.selectedChatId == target.id)
+        #expect(viewModel.searchText.isEmpty)
+
+        viewModel.openChat(id: UUID())
+        #expect(viewModel.selectedChatId == target.id)
+    }
+
     @Test func searchFiltersByTitleIgnoringCase() async throws {
         let (viewModel, _, observation) = try await makeViewModel(chats: [
             Self.chat("Swift actors", daysAgo: 0), Self.chat("Trip ideas", daysAgo: 1),
