@@ -3,6 +3,7 @@ import SwiftUI
 /// Настройки (sheet из сайдбара): «General» — переходы на подэкраны, «Appearance» — тема.
 struct SettingsView: View {
     enum Destination: Hashable {
+        case notifications
         case privacy
     }
 
@@ -18,6 +19,11 @@ struct SettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     SettingsSection("General") {
+                        NavigationLink(value: Destination.notifications) {
+                            SettingsRowLabel(title: "Notifications", systemImage: "bell")
+                        }
+                        .buttonStyle(.plain)
+                        SettingsDivider()
                         NavigationLink(value: Destination.privacy) {
                             SettingsRowLabel(title: "Privacy", systemImage: "hand.raised")
                         }
@@ -41,6 +47,13 @@ struct SettingsView: View {
             }
             .navigationDestination(for: Destination.self) { destination in
                 switch destination {
+                case .notifications:
+                    NotificationSettingsView(
+                        viewModel: NotificationSettingsViewModel(settings: dependencies.settings,
+                                                                 scheduler: dependencies.notifications),
+                        openAppSettings: dependencies.openAppSettings
+                    )
+                    .toolbarRole(.editor)
                 case .privacy:
                     PrivacyView(viewModel: PrivacyViewModel(session: dependencies.session,
                                                             permissions: dependencies.permissions,

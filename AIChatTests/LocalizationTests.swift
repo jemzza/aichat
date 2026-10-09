@@ -50,4 +50,13 @@ struct LocalizationTests {
         let format = russian.localizedString(forKey: "Try again in %lld s", value: nil, table: nil)
         #expect(String(format: format, 30) == "Повторить можно через 30 с")
     }
+
+    @Test func queuedNotificationUsesRussianPlurals() throws {
+        let russian = try russianBundle()
+        let format = russian.localizedString(forKey: "%lld messages waiting for a connection were sent.",
+                                             value: nil, table: nil)
+        #expect(String(format: format, locale: Locale(identifier: "ru"), 1) == "Отправлено 1 сообщение, ждавшее подключения.")
+        #expect(String(format: format, locale: Locale(identifier: "ru"), 3) == "Отправлено 3 сообщения, ждавших подключения.")
+        #expect(String(format: format, locale: Locale(identifier: "ru"), 5) == "Отправлено 5 сообщений, ждавших подключения.")
+    }
 }

@@ -177,6 +177,13 @@ final class ChatListViewModel {
         searchText = ""
     }
 
+    /// Нажатие на уведомление. Чат, которого уже нет в загруженном списке (удалён), не открываем.
+    func openChat(id: UUID) {
+        if hasLoaded, !chats.contains(where: { $0.id == id }) { return }
+        searchText = ""
+        if selectedChatId != id { selectedChatId = id }
+    }
+
     func select(_ chat: Chat) {
         if selectedChatId != chat.id { selectedChatId = chat.id }
     }

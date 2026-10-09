@@ -79,12 +79,21 @@ extension AppContainer {
         let connectivity = makeConnectivity(plan.network)
         let provider = makeProvider(plan.model)
         let dictation = makeDictation(plan.dictation, connectivity: connectivity)
+        let notifications = UserNotificationScheduler()
+        let notificationService = NotificationService(
+            settings: settings,
+            scheduler: notifications,
+            activity: UIKitAppActivity(),
+            repository: repository,
+            plainText: { SpeechText.make(fromMarkdown: $0) }
+        )
         let service = ChatService(
             repository: repository,
             provider: provider,
             onDeviceProvider: makeOnDeviceProvider(plan.onDeviceModel),
             connectivity: connectivity,
             backgroundTasks: UIKitBackgroundTasks(),
+            eventHandler: notificationService,
             clock: ContinuousClock()
         )
         let dependencies = ChatDependencies(
@@ -97,6 +106,7 @@ extension AppContainer {
             prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: provider.displayName,
             settings: settings,
+            notifications: notifications,
             permissions: SystemPermissionStatus(),
             openAppSettings: Self.openAppSettings
         )

@@ -33,6 +33,8 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
     private let onDeviceProvider: (any OnDeviceLLMProvider)?
     private let connectivity: any ConnectivityMonitoring
     private let backgroundTasks: (any BackgroundTaskScheduling)?
+    /// Уведомления о готовом ответе и отправленном outbox.
+    private let eventHandler: (any ChatEventHandling)?
     private let clock: C
     private let now: () -> Date
     private let configuration: Configuration
@@ -49,6 +51,7 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
         onDeviceProvider: (any OnDeviceLLMProvider)? = nil,
         connectivity: any ConnectivityMonitoring,
         backgroundTasks: (any BackgroundTaskScheduling)? = nil,
+        eventHandler: (any ChatEventHandling)? = nil,
         clock: C,
         now: @escaping () -> Date = Date.init,
         configuration: Configuration = Configuration()
@@ -58,6 +61,7 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
         self.onDeviceProvider = onDeviceProvider
         self.connectivity = connectivity
         self.backgroundTasks = backgroundTasks
+        self.eventHandler = eventHandler
         self.clock = clock
         self.now = now
         self.configuration = configuration
@@ -160,25 +164,35 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
 
     /// Отправляет `pending` по очереди: следующий — после того, как ответ на предыдущий готов.
     /// Повторные вызовы во время работы не запускают второй проход параллельно.
+    /// Если что-то ушло — одно событие `queuedMessagesDidSend` на проход.
     func processOutbox() async {
         guard !isProcessingOutbox else {
             isOutboxRerunRequested = true
             return
         }
         isProcessingOutbox = true
-        defer { isProcessingOutbox = false }
+        let sent = await drainOutbox()
+        isProcessingOutbox = false
+        if sent > 0 { await eventHandler?.queuedMessagesDidSend(count: sent) }
+    }
+
+    /// - Returns: сколько `pending` забрано и отправлено.
+    private func drainOutbox() async -> Int {
+        var sent = 0
         repeat {
             isOutboxRerunRequested = false
-            guard connectivity.isOnline, let pending = try? await repository.pendingMessages() else { return }
+            guard connectivity.isOnline, let pending = try? await repository.pendingMessages() else { return sent }
             for message in pending {
-                guard connectivity.isOnline else { return }
+                guard connectivity.isOnline else { return sent }
                 // Чат занят генерацией — его сообщения уйдут, когда она закончится
                 // (`finishGeneration` снова запускает outbox).
                 guard generations[message.chatId] == nil else { continue }
                 guard let task = try? await claimAndGenerate(message) else { continue }
+                sent += 1
                 await task.value
             }
         } while isOutboxRerunRequested
+        return sent
     }
 
     /// Атомарно `pending` → `sent` + ответ `streaming`; `nil` — сообщение уже забрали.
@@ -254,14 +268,20 @@ final class ChatService<C: Clock>: ChatSession where C.Duration == Duration {
         // записать уже не может, а частичный текст должен сохраниться.
         let repository = repository
         let finalFailure = failure
-        await Task {
+        let saved = await Task {
             do {
                 try await repository.updateMessage(id: messageId, text: text, status: status, failure: finalFailure)
+                return true
             } catch {
                 // `MessageNotFound` — чат удалён; прочее — ответ останется `streaming`
                 // и при следующем запуске станет `interrupted`.
+                return false
             }
         }.value
+        // Уведомление — пока фоновое время ещё наше (`endTask` — в `defer`).
+        if saved, status == .done, !text.isEmpty {
+            await eventHandler?.replyDidFinish(chatId: chatId, text: text)
+        }
         finishGeneration(chatId: chatId, messageId: messageId)
     }
 

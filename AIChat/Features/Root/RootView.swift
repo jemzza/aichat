@@ -4,6 +4,8 @@ import SwiftUI
 /// iPad/Mac (regular) — `NavigationSplitView`. Верхняя панель своя в обоих случаях.
 struct RootView: View {
     private let dependencies: ChatDependencies
+    /// Нажатие на уведомление → открыть чат.
+    private let navigation: ChatNavigationRequests
     @State private var chatList: ChatListViewModel
     @State private var connectivity: ConnectivityStatus
     @State private var isSidebarOpen = false
@@ -11,8 +13,9 @@ struct RootView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    init(dependencies: ChatDependencies) {
+    init(dependencies: ChatDependencies, navigation: ChatNavigationRequests = ChatNavigationRequests()) {
         self.dependencies = dependencies
+        self.navigation = navigation
         _chatList = State(initialValue: ChatListViewModel(repository: dependencies.repository,
                                                           session: dependencies.session))
         _connectivity = State(initialValue: ConnectivityStatus(monitor: dependencies.connectivity))
@@ -33,6 +36,12 @@ struct RootView: View {
                 .presentationSizing(.form)
         }
         .task { await chatList.observe() }
+        .onChange(of: navigation.pendingChatId, initial: true) { _, chatId in
+            guard chatId != nil, let chatId = navigation.takePendingChatId() else { return }
+            isSettingsPresented = false
+            isSidebarOpen = false
+            chatList.openChat(id: chatId)
+        }
         .task { await connectivity.observe() }
     }
 

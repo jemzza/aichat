@@ -18,6 +18,8 @@ struct ChatDependencies {
     let modelName: LocalizedStringResource
     /// Настройки (экран Settings).
     let settings: any SettingsStoring
+    /// Разрешение и отправка локальных уведомлений (экран Notifications).
+    let notifications: any LocalNotificationScheduling
     /// Статус разрешений диктовки (экран Privacy).
     let permissions: any PermissionStatusProviding
     /// Открывает страницу приложения в системных Настройках.

@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct AIChatApp: App {
+    @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
     @State private var container = AppContainer(
         environment: AppContainer.environment(for: .processInfo),
         launchOptions: LaunchOptions(arguments: ProcessInfo.processInfo.arguments)
@@ -11,7 +12,7 @@ struct AIChatApp: App {
         WindowGroup {
             switch container.environment {
             case .live:
-                LiveRoot(container: container)
+                LiveRoot(container: container, navigation: appDelegate.navigation)
                     .windowAppearance(container.settings.appearance)
             case .unitTests:
                 EmptyView()
@@ -23,6 +24,7 @@ struct AIChatApp: App {
 /// Запуск: открываем базу (асинхронно), потом показываем экраны и запускаем `ChatService`.
 private struct LiveRoot: View {
     let container: AppContainer
+    let navigation: ChatNavigationRequests
 
     private enum Phase {
         case loading
@@ -39,7 +41,7 @@ private struct LiveRoot: View {
             case .loading:
                 Color.appBackground.ignoresSafeArea()
             case let .ready(dependencies, service):
-                RootView(dependencies: dependencies)
+                RootView(dependencies: dependencies, navigation: navigation)
                     // Сеть и запуск → outbox; живёт столько же, сколько окно.
                     .task { await service.run() }
                     .onChange(of: scenePhase) { _, phase in

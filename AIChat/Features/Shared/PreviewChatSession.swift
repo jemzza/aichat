@@ -174,6 +174,7 @@ extension ChatDependencies {
         repository: any ChatRepository = PreviewData.repository(),
         connectivity: any ConnectivityMonitoring = FakeConnectivityMonitor(isOnline: true),
         settings: any SettingsStoring = InMemorySettingsStore(),
+        notifications: any LocalNotificationScheduling = FakeNotificationScheduler(status: .authorized),
         permissions: any PermissionStatusProviding = FakePermissionStatus()
     ) -> ChatDependencies {
         ChatDependencies(
@@ -186,6 +187,7 @@ extension ChatDependencies {
             prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: "Groq · gpt-oss-120b",
             settings: settings,
+            notifications: notifications,
             permissions: permissions,
             openAppSettings: {}
         )
