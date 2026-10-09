@@ -42,7 +42,7 @@ struct NotificationSettingsView: View {
     }
 
     private var deniedNotice: some View {
-        SettingsSection(footer: "Notifications are turned off in Settings") {
+        SettingsSection("Notifications are turned off in Settings") {
             Button(action: openAppSettings) {
                 SettingsRowLabel(title: "Open Settings", systemImage: "gear", accessory: .external)
             }

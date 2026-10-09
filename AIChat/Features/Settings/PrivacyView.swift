@@ -27,13 +27,6 @@ struct PrivacyView: View {
         .background(.appBackground)
         .navigationTitle("Privacy")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Delete all chats?", isPresented: $viewModel.isConfirmingDeleteAll,
-                            titleVisibility: .visible) {
-            Button("Delete All Chats", role: .destructive) { viewModel.confirmDeleteAll() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("All chats, folders and messages will be permanently deleted from this device.")
-        }
         .alert("Couldn't delete chats", isPresented: $viewModel.deleteFailed) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -86,6 +79,14 @@ struct PrivacyView: View {
             }
             .buttonStyle(.plain)
             .disabled(viewModel.isDeleting)
+            // На iPad диалог — поповер со стрелкой к этой кнопке.
+            .confirmationDialog("Delete all chats?", isPresented: $viewModel.isConfirmingDeleteAll,
+                                titleVisibility: .visible) {
+                Button("Delete All Chats", role: .destructive) { viewModel.confirmDeleteAll() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("All chats, folders and messages will be permanently deleted from this device.")
+            }
         }
     }
 }

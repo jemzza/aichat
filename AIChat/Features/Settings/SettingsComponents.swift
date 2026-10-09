@@ -107,6 +107,8 @@ struct SettingsCloseButton: View {
                     .frame(width: 32, height: 32)
                     .background(.appSurface, in: .circle)
             }
+            // Иначе панель красит кнопку в акцент — на iOS 26 ✕ основного цвета.
+            .tint(.primary)
             .accessibilityLabel(Text("Close"))
         }
     }
