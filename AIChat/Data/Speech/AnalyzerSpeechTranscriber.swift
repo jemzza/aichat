@@ -1,131 +1,76 @@
 import AVFoundation
 import Speech
 
-/// Диктовка на `SpeechAnalyzer` + `SpeechTranscriber` (iOS 26), на устройстве.
+/// Распознавание записи на `SpeechAnalyzer` + `SpeechTranscriber` (iOS 26), на устройстве.
 /// Модель языка система скачивает один раз — при первой диктовке, если есть сеть.
 /// Без модели и без сети (или если язык не поддерживается) — запасной путь
-/// `RecognizerSpeechTranscriber` (on-device `SFSpeechRecognizer`).
+/// `RecognizerSpeechTranscriber`.
 @available(iOS 26, *)
 @MainActor
 final class AnalyzerSpeechTranscriber: SpeechTranscribing {
-    private struct Session {
-        let id: UUID
-        let capture: AudioCapture
-        let analyzer: SpeechAnalyzer
-        let input: AsyncStream<AnalyzerInput>.Continuation
-    }
-
     private let connectivity: any ConnectivityMonitoring
     private let fallback: RecognizerSpeechTranscriber
-    private var session: Session?
-    /// Сессия идёт через запасной путь — `finish()` уходит туда.
-    private var usesFallback = false
-    private var interruptions: Task<Void, Never>?
 
     init(connectivity: any ConnectivityMonitoring) {
         self.connectivity = connectivity
         fallback = RecognizerSpeechTranscriber(connectivity: connectivity)
     }
 
-    func dictate() -> AsyncThrowingStream<DictationEvent, Error> {
-        let (stream, continuation) = AsyncThrowingStream<DictationEvent, Error>.makeStream()
-        let id = UUID()
-        let run = Task { [weak self] in
-            do {
-                try await self?.run(id: id, continuation: continuation)
-                continuation.finish()
-            } catch {
-                DictationLog.logger.error("Analyzer: \(String(describing: error), privacy: .public)")
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { [weak self] _ in
-            run.cancel()
-            Task { @MainActor in await self?.cancel(id: id) }
-        }
-        return stream
+    /// `SpeechAnalyzer` разрешения на распознавание не требует — спрашиваем его, только
+    /// если язык пойдёт запасным путём.
+    func prepare() async throws {
+        if await Self.locale() == nil { try await fallback.prepare() }
     }
 
-    func finish() {
-        if usesFallback {
-            fallback.finish()
-            return
-        }
-        guard let session else { return }
-        // Микрофон выключаем сразу; анализатор дорасшифровывает уже полученное аудио.
-        session.capture.stop()
-        session.input.finish()
-        Task { try? await session.analyzer.finalizeAndFinishThroughEndOfInput() }
-    }
-
-    // MARK: Сессия
-
-    private func run(id: UUID, continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation) async throws {
-        if let session { await cancel(id: session.id) }
-        usesFallback = false
-
-        guard let transcriber = try await readyTranscriber(continuation: continuation) else {
+    func transcribe(fileAt url: URL, onDownloadProgress: @escaping @Sendable (Double) -> Void) async throws -> String {
+        guard let transcriber = try await readyTranscriber(onDownloadProgress: onDownloadProgress) else {
             DictationLog.logger.info("Analyzer: no ready model, using SFSpeechRecognizer")
-            usesFallback = true
-            defer { usesFallback = false }
-            for try await event in fallback.dictate() { continuation.yield(event) }
-            return
+            return try await fallback.transcribe(fileAt: url, onDownloadProgress: onDownloadProgress)
         }
-        guard await MicrophonePermission.request() else { throw DictationUnavailability.microphoneDenied }
-        try Task.checkCancellation()
-
-        let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
-        let (inputs, input) = AsyncStream<AnalyzerInput>.makeStream()
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-        let capture = AudioCapture()
-        try capture.start(format: format) { buffer, level in
-            input.yield(AnalyzerInput(buffer: buffer))
-            continuation.yield(.level(level))
-        }
-        session = Session(id: id, capture: capture, analyzer: analyzer, input: input)
-        observeInterruptions()
         do {
-            try await analyzer.start(inputSequence: inputs)
+            // Результаты читаем параллельно с анализом: поток кончается, когда анализатор дочитал файл.
+            let results = Task {
+                var text = ""
+                for try await result in transcriber.results where result.isFinal {
+                    let piece = String(result.text.characters).trimmingCharacters(in: .whitespaces)
+                    text = DictationText.join(text, piece)
+                }
+                return text
+            }
+            let file = try AVAudioFile(forReading: url)
+            let analyzer = try await SpeechAnalyzer(inputAudioFile: file, modules: [transcriber], finishAfterFile: true)
+            return try await withTaskCancellationHandler {
+                try await results.value
+            } onCancel: {
+                results.cancel()
+                Task { await analyzer.cancelAndFinishNow() }
+            }
         } catch {
-            await cancel(id: id)
+            DictationLog.logger.error("Analyzer: \(String(describing: error), privacy: .public)")
             throw error
         }
-        continuation.yield(.recording)
+    }
 
-        // Результаты заканчиваются, когда анализатор завершён (`finish()` или отмена).
-        var transcript = Transcript()
-        for try await result in transcriber.results {
-            let text = String(result.text.characters)
-            if result.isFinal {
-                transcript.finalized = Transcript.join(transcript.finalized, text.trimmingCharacters(in: .whitespaces))
-                transcript.volatile = ""
-            } else {
-                transcript.volatile = text.trimmingCharacters(in: .whitespaces)
-            }
-            continuation.yield(.transcript(transcript))
+    /// Первый язык пользователя, который поддерживает `SpeechTranscriber`.
+    private static func locale() async -> Locale? {
+        guard SpeechTranscriber.isAvailable else { return nil }
+        for candidate in DictationLocales.candidates {
+            if let supported = await SpeechTranscriber.supportedLocale(equivalentTo: candidate) { return supported }
         }
-        end(id: id)
+        return nil
     }
 
     /// Транскрайбер с установленной моделью; `nil` — идём запасным путём.
-    private func readyTranscriber(
-        continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation
-    ) async throws -> SpeechTranscriber? {
-        guard SpeechTranscriber.isAvailable else { return nil }
-        var locale: Locale?
-        for candidate in DictationLocales.candidates {
-            if let supported = await SpeechTranscriber.supportedLocale(equivalentTo: candidate) {
-                locale = supported
-                break
-            }
+    private func readyTranscriber(onDownloadProgress: @escaping @Sendable (Double) -> Void) async throws -> SpeechTranscriber? {
+        guard let locale = await Self.locale() else {
+            DictationLog.logger.info("Analyzer: unavailable or no supported locale")
+            return nil
         }
-        guard let locale else { return nil }
-        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+        let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
         let status = await AssetInventory.status(forModules: [transcriber])
         DictationLog.logger.info(
             "Analyzer: \(locale.identifier, privacy: .public), assets=\(String(describing: status), privacy: .public)"
         )
-
         switch status {
         case .installed:
             return transcriber
@@ -134,12 +79,13 @@ final class AnalyzerSpeechTranscriber: SpeechTranscribing {
         case .supported, .downloading:
             guard connectivity.isOnline else { return nil }
             do {
-                try await download(for: transcriber, continuation: continuation)
+                try await download(for: transcriber, onDownloadProgress: onDownloadProgress)
                 return transcriber
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 // Не скачалось (оборвалась сеть) — пробуем распознать без новой модели.
+                DictationLog.logger.error("Analyzer: download failed \(String(describing: error), privacy: .public)")
                 return nil
             }
         @unknown default:
@@ -149,44 +95,18 @@ final class AnalyzerSpeechTranscriber: SpeechTranscribing {
 
     private func download(
         for transcriber: SpeechTranscriber,
-        continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation
+        onDownloadProgress: @escaping @Sendable (Double) -> Void
     ) async throws {
         guard let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) else { return }
-        continuation.yield(.downloading(fraction: 0))
+        onDownloadProgress(0)
         let progress = request.progress
         let reporting = Task {
             while !Task.isCancelled {
-                continuation.yield(.downloading(fraction: progress.fractionCompleted))
+                onDownloadProgress(progress.fractionCompleted)
                 try? await Task.sleep(for: .milliseconds(200))
             }
         }
         defer { reporting.cancel() }
         try await request.downloadAndInstall()
-    }
-
-    private func end(id: UUID) {
-        guard let session, session.id == id else { return }
-        session.capture.stop()
-        self.session = nil
-        interruptions?.cancel()
-    }
-
-    private func cancel(id: UUID) async {
-        guard let session, session.id == id else { return }
-        self.session = nil
-        interruptions?.cancel()
-        session.capture.stop()
-        session.input.finish()
-        await session.analyzer.cancelAndFinishNow()
-    }
-
-    /// Звонок, Siri, отключённые наушники — заканчиваем диктовку, сказанное остаётся.
-    private func observeInterruptions() {
-        interruptions?.cancel()
-        interruptions = Task { [weak self] in
-            await AudioInterruptions.first()
-            guard !Task.isCancelled else { return }
-            self?.finish()
-        }
     }
 }

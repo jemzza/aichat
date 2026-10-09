@@ -98,7 +98,9 @@ private struct ChatScreenContent: View {
                                                        onChatCreated: onChatCreated,
                                                        copyToClipboard: { UIPasteboard.general.string = $0 },
                                                        speech: dependencies.speech,
+                                                       recorder: dependencies.recorder,
                                                        transcriber: dependencies.transcriber,
+                                                       prepareImage: dependencies.prepareImage,
                                                        openSettings: Self.openAppSettings))
     }
 

@@ -34,16 +34,26 @@ struct DependencyPlan: Hashable, Sendable {
         case scripted
     }
 
+    enum OnDeviceModel: Hashable, Sendable {
+        /// Foundation Models на iOS 26, иначе нет.
+        case system
+        /// `-mockOnDeviceModel`: фейк, доступный всегда (и на iOS 18).
+        case scripted
+    }
+
     let storage: Storage
     let network: Network
     let model: Model
     let dictation: Dictation
+    let onDeviceModel: OnDeviceModel
 
-    init(storage: Storage, network: Network, model: Model, dictation: Dictation = .system) {
+    init(storage: Storage, network: Network, model: Model, dictation: Dictation = .system,
+         onDeviceModel: OnDeviceModel = .system) {
         self.storage = storage
         self.network = network
         self.model = model
         self.dictation = dictation
+        self.onDeviceModel = onDeviceModel
     }
 
     init(options: LaunchOptions) {
@@ -55,6 +65,7 @@ struct DependencyPlan: Hashable, Sendable {
             model = options.slowStream ? .slowStream : .groq
         }
         dictation = options.mockDictation ? .scripted : .system
+        onDeviceModel = options.mockOnDeviceModel ? .scripted : .system
     }
 }
 
@@ -66,9 +77,11 @@ extension AppContainer {
         let repository = try await makeRepository(plan.storage)
         let connectivity = makeConnectivity(plan.network)
         let provider = makeProvider(plan.model)
+        let dictation = makeDictation(plan.dictation, connectivity: connectivity)
         let service = ChatService(
             repository: repository,
             provider: provider,
+            onDeviceProvider: makeOnDeviceProvider(plan.onDeviceModel),
             connectivity: connectivity,
             backgroundTasks: UIKitBackgroundTasks(),
             clock: ContinuousClock()
@@ -78,7 +91,9 @@ extension AppContainer {
             session: service,
             connectivity: connectivity,
             speech: SystemSpeechSynthesizer(),
-            transcriber: makeTranscriber(plan.dictation, connectivity: connectivity),
+            recorder: dictation.recorder,
+            transcriber: dictation.transcriber,
+            prepareImage: { ImageDownscaler.jpeg(from: $0) },
             modelName: provider.displayName
         )
         return (dependencies, service)
@@ -130,22 +145,40 @@ extension AppContainer {
         }
     }
 
-    private func makeTranscriber(
+    private func makeOnDeviceProvider(_ model: DependencyPlan.OnDeviceModel) -> (any OnDeviceLLMProvider)? {
+        #if DEBUG
+        if model == .scripted {
+            return FakeOnDeviceLLMProvider(script: .reply(Self.onDeviceReply, tokenDelay: .milliseconds(80)))
+        }
+        #endif
+        #if canImport(FoundationModels)
+        if #available(iOS 26, *) { return FoundationModelsProvider() }
+        #endif
+        return nil
+    }
+
+    private func makeDictation(
         _ dictation: DependencyPlan.Dictation,
         connectivity: any ConnectivityMonitoring
-    ) -> any SpeechTranscribing {
+    ) -> (recorder: any VoiceRecording, transcriber: any SpeechTranscribing) {
         #if DEBUG
-        if dictation == .scripted { return FakeSpeechTranscriber(script: .phrase(Self.dictationPhrase, wordDelay: .milliseconds(500))) }
+        if dictation == .scripted {
+            return (FakeVoiceRecorder(),
+                    FakeSpeechTranscriber(result: .success(Self.dictationPhrase), delay: .milliseconds(800)))
+        }
         #endif
         if #available(iOS 26, *), SpeechTranscriber.isAvailable {
-            return AnalyzerSpeechTranscriber(connectivity: connectivity)
+            return (SystemVoiceRecorder(), AnalyzerSpeechTranscriber(connectivity: connectivity))
         }
-        return RecognizerSpeechTranscriber(connectivity: connectivity)
+        return (SystemVoiceRecorder(), RecognizerSpeechTranscriber(connectivity: connectivity))
     }
 
     #if DEBUG
     /// Фраза фейковой диктовки (`-mockDictation`) — «речь» пользователя, не строка интерфейса.
     private static let dictationPhrase = "What is the difference between a struct and a class in Swift"
+
+    /// Ответ фейковой модели на устройстве (`-mockOnDeviceModel`) — содержимое переписки.
+    private static let onDeviceReply = "This answer was generated **on this device**, without a network connection."
 
     /// Ответ фейка для `-mockSlowStream` (содержимое переписки, не строка интерфейса).
     private static let slowStreamReply = """

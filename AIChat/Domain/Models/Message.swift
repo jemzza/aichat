@@ -36,6 +36,8 @@ struct Message: Identifiable, Hashable, Sendable {
     var status: MessageStatus
     /// Только у ответа ассистента со статусом `failed`.
     var failure: MessageFailure?
+    /// Фото пользователя; у ответов ассистента всегда пусто. Не меняются после отправки.
+    let images: [ImageAttachment]
     let createdAt: Date
 
     init(
@@ -45,6 +47,7 @@ struct Message: Identifiable, Hashable, Sendable {
         text: String,
         status: MessageStatus,
         failure: MessageFailure? = nil,
+        images: [ImageAttachment] = [],
         createdAt: Date
     ) {
         self.id = id
@@ -53,6 +56,7 @@ struct Message: Identifiable, Hashable, Sendable {
         self.text = text
         self.status = status
         self.failure = failure
+        self.images = images
         self.createdAt = createdAt
     }
 }

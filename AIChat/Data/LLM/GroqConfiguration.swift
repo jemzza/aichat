@@ -4,9 +4,12 @@ import Foundation
 /// поэтому случайный `print(configuration)` или дамп в отладчике его не покажет.
 struct GroqConfiguration: Sendable, Equatable {
     static let defaultModel = "openai/gpt-oss-120b"
+    /// Единственная vision-модель Groq (preview, 2026-10-08): запросы с фото идут в неё.
+    static let defaultVisionModel = "qwen/qwen3.8-27b"
 
     let apiKey: String
     let model: String
+    var visionModel = GroqConfiguration.defaultVisionModel
 
     var hasAPIKey: Bool { !apiKey.isEmpty }
 

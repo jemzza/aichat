@@ -552,4 +552,33 @@ struct ChatRepositoryContractTests {
         let chats = try await firstValue(of: repository.observeChats())
         #expect(chats.map(\.id) == [chat.id])
     }
+
+    // MARK: Фото
+
+    @Test(arguments: RepositoryKind.allCases)
+    func imagesAreStoredWithMessagesInOrder(kind: RepositoryKind) async throws {
+        let repository = kind.make()
+        let chat = makeChat()
+        let photos = [ImageAttachment(jpegData: Data([1, 2])), ImageAttachment(jpegData: Data([3]))]
+        let first = Message(chatId: chat.id, role: .user, text: "Look", status: .sent, images: photos, createdAt: at(0))
+        try await repository.insertChat(chat, firstMessage: first)
+        let answer = reply(chat, at: 1)
+        try await repository.insertMessage(answer)
+        let pending = Message(chatId: chat.id, role: .user, text: "", status: .pending,
+                              images: [ImageAttachment(jpegData: Data([4]))], createdAt: at(2))
+        try await repository.insertMessage(pending)
+
+        let stored = try await messages(repository, chat) { $0.count == 3 }
+        #expect(stored.map(\.images) == [photos, [], pending.images])
+        #expect(try await repository.pendingMessages().map(\.images) == [pending.images])
+
+        // Ответ из outbox: фото вопроса остаются на месте, стрим их не трогает.
+        let streaming = reply(chat, "", status: .streaming, at: 3)
+        #expect(try await repository.claimPending(messageId: pending.id, reply: streaming))
+        try await repository.updateMessage(id: streaming.id, text: "A cat", status: .done, failure: nil)
+        let history = try await repository.history(chatId: chat.id, before: streaming.id, limit: 10)
+        #expect(history.map(\.images) == [photos, [], pending.images])
+        #expect(try await repository.history(chatId: chat.id, before: streaming.id, limit: 1).map(\.images)
+                == [pending.images])
+    }
 }

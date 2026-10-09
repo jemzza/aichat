@@ -1,56 +1,67 @@
 import Foundation
 import Observation
 
-/// Диктовка в поле ввода: речь → текст, который пользователь правит и отправляет сам.
-/// Владелец — `ChatViewModel`: он отдаёт текст до начала диктовки и получает склейку
-/// «старый текст + расшифровка» на каждом обновлении.
+/// Диктовка «зажми и говори» в два шага: пока кнопка зажата — запись звука, отпустил —
+/// запись распознаётся и текст отдаётся владельцу (`ChatViewModel` дописывает его в поле).
 @MainActor
 @Observable
 final class DictationViewModel {
     enum State: Equatable {
         case idle
-        /// Разрешения, подготовка микрофона.
+        /// Разрешения: микрофон, распознавание.
         case preparing
-        /// Однократная загрузка модели языка (iOS 26), 0…1.
-        case downloading(Double)
         case recording
+        /// Запись остановлена, идёт распознавание.
+        case transcribing
+        /// Однократная загрузка модели языка (iOS 26) перед распознаванием, 0…1.
+        case downloading(Double)
         case unavailable(DictationUnavailability)
         /// Что-то пошло не так — можно попробовать ещё раз.
         case failed
-        /// Кнопку отпустили раньше, чем началась запись: подсказываем «зажми и говори».
+        /// Кнопку отпустили слишком быстро: подсказываем «зажми и говори».
         case holdHint
+        /// Записали, но речи не распознали.
+        case nothingHeard
     }
 
+    /// Короче — считаем случайным касанием, а не диктовкой.
+    static let minimumDuration: Duration = .milliseconds(500)
+
     private(set) var state = State.idle
+    /// Сколько уже записано — «Recording 0:03».
+    private(set) var duration: Duration = .zero
     /// Громкость 0…1 для индикатора записи.
     private(set) var level: Float = 0
 
+    @ObservationIgnored private let recorder: any VoiceRecording
     @ObservationIgnored private let transcriber: any SpeechTranscribing
     @ObservationIgnored private let speech: (any SpeechSynthesizing)?
     @ObservationIgnored private let openSettingsAction: () -> Void
-    @ObservationIgnored private var session: Task<Void, Never>?
-    /// Куда отдавать текст; `nil` — пользователь начал править поле, расшифровку больше не применяем.
     @ObservationIgnored private var onText: ((String) -> Void)?
-    /// Сколько ждём дорасшифровку после «Done», прежде чем оборвать сессию.
-    @ObservationIgnored private let finishTimeout: Duration
+    /// Палец всё ещё на кнопке (для отпускания во время запроса разрешений).
+    @ObservationIgnored private var isHeld = false
+    /// Подготовка и запись (до отпускания).
+    @ObservationIgnored private var recording: Task<Void, Never>?
+    /// Распознавание после отпускания.
+    @ObservationIgnored private var transcription: Task<Void, Never>?
 
     init(
+        recorder: any VoiceRecording,
         transcriber: any SpeechTranscribing,
         speech: (any SpeechSynthesizing)? = nil,
-        openSettings: @escaping () -> Void = {},
-        finishTimeout: Duration = .seconds(3)
+        openSettings: @escaping () -> Void = {}
     ) {
+        self.recorder = recorder
         self.transcriber = transcriber
         self.speech = speech
         self.openSettingsAction = openSettings
-        self.finishTimeout = finishTimeout
     }
 
-    /// Идёт сессия: подготовка, загрузка модели или запись.
+    /// Идёт сессия: подготовка, запись или распознавание.
     var isActive: Bool {
         switch state {
-        case .preparing, .downloading, .recording: true
-        case .idle, .unavailable, .failed, .holdHint: false
+        case .preparing, .recording, .transcribing, .downloading: true
+        case .idle, .unavailable, .failed, .holdHint, .nothingHeard: false
         }
     }
 
@@ -59,74 +70,57 @@ final class DictationViewModel {
         state == .unavailable(.microphoneDenied) || state == .unavailable(.recognitionDenied)
     }
 
-    /// Начинает диктовку. Текст поля = `prefix` + расшифровка (через пробел).
-    func start(prefix: String, onText: @escaping (String) -> Void) {
+    /// Палец лёг на кнопку: разрешения, затем запись.
+    /// - Parameter onText: распознанный текст (непустой) — вызывается один раз в конце.
+    func press(onText: @escaping (String) -> Void) {
         guard !isActive else { return }
         // Озвучка и микрофон одновременно — эхо и спор за аудиосессию.
         speech?.stop()
+        isHeld = true
         state = .preparing
+        duration = .zero
         level = 0
         self.onText = onText
-        let stream = transcriber.dictate()
-        session = Task { [weak self] in
-            do {
-                for try await event in stream {
-                    self?.handle(event, prefix: prefix)
-                }
-                self?.end(.idle)
-            } catch let reason as DictationUnavailability {
-                self?.end(.unavailable(reason))
-            } catch {
-                self?.end(Task.isCancelled ? .idle : .failed)
-            }
-        }
+        recording = Task { [weak self] in await self?.record() }
     }
 
-    /// «Done»: выключает микрофон и ждёт последнюю фразу (не дольше `finishTimeout`).
-    func finish() async {
-        guard isActive, let session else { return }
-        guard state == .recording else {
-            cancel()
-            return
-        }
-        transcriber.finish()
-        let watchdog = Task { [finishTimeout] in
-            try? await Task.sleep(for: finishTimeout)
-            guard !Task.isCancelled else { return }
-            session.cancel()
-        }
-        await session.value
-        watchdog.cancel()
-    }
-
-    /// Кнопку отпустили: идёт запись — дописываем последнюю фразу; запись ещё не началась
-    /// (разрешения, загрузка модели) — отменяем и подсказываем, что кнопку надо держать.
+    /// Палец поднялся: распознаём записанное. Возвращается, когда текст уже отдан.
     func release() async {
-        if state == .recording {
-            await finish()
-        } else if isActive {
-            cancel()
-            state = .holdHint
+        isHeld = false
+        switch state {
+        case .recording:
+            if duration < Self.minimumDuration {
+                recorder.cancel()
+                end(.holdHint)
+            } else {
+                transcribeRecording()
+            }
+        case .preparing:
+            // Отпустили, пока спрашивали разрешения: записи не было.
+            recording?.cancel()
+            end(.holdHint)
+        default:
+            break
+        }
+        await transcription?.value
+    }
+
+    /// VoiceOver: двойное касание начинает и заканчивает запись (держать неудобно).
+    func toggle(onText: @escaping (String) -> Void) async {
+        if state == .recording || state == .preparing {
+            await release()
+        } else if !isActive {
+            press(onText: onText)
         }
     }
 
-    /// Пользователь сам правит поле: его правка важнее — расшифровку дальше не применяем.
-    func detach() {
-        onText = nil
-        guard isActive else { return }
-        if state == .recording {
-            transcriber.finish()
-        } else {
-            cancel()
-        }
-    }
-
-    /// Обрывает сессию: уже вставленный текст остаётся в поле.
+    /// Обрывает всё: запись удаляется, распознавание отменяется, текст не вставляется.
     func cancel() {
-        onText = nil
-        session?.cancel()
-        session = nil
-        if isActive { state = .idle }
+        isHeld = false
+        recording?.cancel()
+        transcription?.cancel()
+        if state == .recording { recorder.cancel() }
+        if isActive { end(.idle) }
     }
 
     func dismissMessage() {
@@ -138,29 +132,105 @@ final class DictationViewModel {
         openSettingsAction()
     }
 
-    private func handle(_ event: DictationEvent, prefix: String) {
-        switch event {
-        case let .downloading(fraction):
-            state = .downloading(fraction)
-        case .recording:
-            state = .recording
-        case let .level(level):
-            self.level = level
-        case let .transcript(transcript):
-            if state != .recording { state = .recording }
-            onText?(Transcript.join(prefix, transcript.text))
+    // MARK: Шаги
+
+    private func record() async {
+        guard await recorder.requestPermission() else { return end(.unavailable(.microphoneDenied)) }
+        do {
+            try await transcriber.prepare()
+        } catch {
+            return end(Self.state(for: error))
         }
+        // Пока шли системные запросы разрешений, кнопку отпустили или экран закрыли.
+        guard !Task.isCancelled, state == .preparing else { return }
+        guard isHeld else { return end(.holdHint) }
+
+        let events: AsyncStream<RecordingEvent>
+        do {
+            events = try recorder.start()
+        } catch {
+            return end(.failed)
+        }
+        state = .recording
+        for await event in events {
+            guard state == .recording else { break }
+            switch event {
+            case let .progress(duration, level):
+                self.duration = duration
+                self.level = level
+            case .stoppedAutomatically:
+                transcribeRecording()
+            }
+        }
+    }
+
+    /// Останавливает запись и распознаёт её. Синхронно меняет состояние, чтобы отпускание
+    /// и автоостановка не запустили распознавание дважды.
+    private func transcribeRecording() {
+        guard state == .recording else { return }
+        level = 0
+        guard let url = recorder.stop() else { return end(.failed) }
+        state = .transcribing
+        transcription = Task { [weak self] in
+            await self?.transcribe(url)
+        }
+    }
+
+    private func transcribe(_ url: URL) async {
+        defer { recorder.discard(url) }
+        do {
+            let text = try await transcriber.transcribe(fileAt: url) { [weak self] fraction in
+                Task { @MainActor in self?.downloading(fraction) }
+            }
+            guard !Task.isCancelled else { return end(.idle) }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                end(.nothingHeard)
+            } else {
+                onText?(trimmed)
+                end(.idle)
+            }
+        } catch {
+            end(Task.isCancelled ? .idle : Self.state(for: error))
+        }
+    }
+
+    private func downloading(_ fraction: Double) {
+        guard state == .transcribing || state.isDownloading else { return }
+        // Модель скачана — дальше обычное распознавание.
+        state = fraction < 1 ? .downloading(fraction) : .transcribing
     }
 
     private func end(_ state: State) {
         self.state = state
         level = 0
         onText = nil
-        session = nil
+        recording = nil
+        transcription = nil
+    }
+
+    private static func state(for error: Error) -> State {
+        if let reason = error as? DictationUnavailability { return .unavailable(reason) }
+        if error is CancellationError { return .idle }
+        return .failed
     }
 }
 
-/// Текст и иконка сообщения под полем ввода, когда диктовка невозможна.
+private extension DictationViewModel.State {
+    var isDownloading: Bool {
+        if case .downloading = self { true } else { false }
+    }
+}
+
+/// Склейка надиктованного с уже набранным: через один пробел, если его нет на стыке.
+enum DictationText {
+    static func join(_ head: String, _ tail: String) -> String {
+        guard let last = head.last, let first = tail.first else { return head + tail }
+        return last.isWhitespace || first.isWhitespace ? head + tail : head + " " + tail
+    }
+}
+
+/// Текст и иконка сообщения под полем ввода, когда диктовка не получилась.
 struct DictationMessagePresentation: Sendable {
     let title: LocalizedStringResource
     let systemImage: String
@@ -187,12 +257,15 @@ struct DictationMessagePresentation: Sendable {
             title = "Dictation needs a one-time download. Connect to the internet and try again."
             systemImage = "arrow.down.circle"
         case .failed:
-            title = "Couldn't start dictation. Please try again."
+            title = "Couldn't recognize the recording. Please try again."
             systemImage = "exclamationmark.triangle"
         case .holdHint:
             title = "Hold the microphone button while you speak."
             systemImage = "hand.tap"
-        case .idle, .preparing, .downloading, .recording:
+        case .nothingHeard:
+            title = "Didn't catch that. Try again."
+            systemImage = "ear"
+        case .idle, .preparing, .recording, .transcribing, .downloading:
             return nil
         }
     }

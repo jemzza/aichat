@@ -75,6 +75,7 @@ struct ChatView: View {
                 isGenerating: viewModel.isGenerating,
                 canSend: viewModel.canSend,
                 dictation: composerDictation,
+                attachments: composerAttachments,
                 onSend: send,
                 onStop: { viewModel.stop() }
             )
@@ -94,6 +95,24 @@ struct ChatView: View {
         } message: {
             Text("Please try again.")
         }
+        .alert("Couldn't attach the photo", isPresented: attachmentFailedBinding) {
+            Button("OK", role: .cancel) { viewModel.dismissAttachmentFailure() }
+        } message: {
+            Text("Choose a different photo.")
+        }
+        .alert("Couldn't answer offline", isPresented: offlineAnswerFailedBinding) {
+            Button("OK", role: .cancel) { viewModel.dismissOfflineAnswerFailure() }
+        } message: {
+            Text("Please try again.")
+        }
+    }
+
+    private var attachmentFailedBinding: Binding<Bool> {
+        Binding { viewModel.attachmentFailed } set: { if !$0 { viewModel.dismissAttachmentFailure() } }
+    }
+
+    private var offlineAnswerFailedBinding: Binding<Bool> {
+        Binding { viewModel.offlineAnswerFailed } set: { if !$0 { viewModel.dismissOfflineAnswerFailure() } }
     }
 
     private var retryFailedBinding: Binding<Bool> {
@@ -106,10 +125,12 @@ struct ChatView: View {
             isCopied: viewModel.copiedMessageId == message.id,
             canReadAloud: viewModel.canReadAloud(message),
             isReadingAloud: viewModel.speakingMessageId == message.id,
+            canAnswerOffline: viewModel.canAnswerOffline(message),
             copy: { viewModel.copy(message) },
             toggleReadAloud: { viewModel.toggleReadAloud(message) },
             retry: { Task { await viewModel.retry(message) } },
-            copyText: { viewModel.copyText($0) }
+            copyText: { viewModel.copyText($0) },
+            answerOffline: { Task { await viewModel.answerOffline(message) } }
         )
     }
 
@@ -117,6 +138,7 @@ struct ChatView: View {
         guard let dictation = viewModel.dictation else { return nil }
         return ComposerDictation(
             state: dictation.state,
+            duration: dictation.duration,
             level: dictation.level,
             canOpenSettings: dictation.canOpenSettings,
             press: { viewModel.beginDictation() },
@@ -124,6 +146,17 @@ struct ChatView: View {
             toggle: { Task { await viewModel.toggleDictation() } },
             openSettings: { dictation.openSettings() },
             dismissMessage: { dictation.dismissMessage() }
+        )
+    }
+
+    private var composerAttachments: ComposerAttachments? {
+        guard viewModel.supportsImages else { return nil }
+        return ComposerAttachments(
+            images: viewModel.attachments,
+            remainingSlots: viewModel.remainingAttachmentSlots,
+            isPreparing: viewModel.isPreparingImages,
+            add: { originals in Task { await viewModel.attachImages(originals) } },
+            remove: { viewModel.removeAttachment(id: $0) }
         )
     }
 
@@ -167,7 +200,9 @@ private struct ChatViewPreview: View {
                                                        repository: dependencies.repository,
                                                        session: dependencies.session,
                                                        speech: dependencies.speech,
-                                                       transcriber: dependencies.transcriber))
+                                                       recorder: dependencies.recorder,
+                                                       transcriber: dependencies.transcriber,
+                                                       prepareImage: dependencies.prepareImage))
     }
 
     var body: some View {

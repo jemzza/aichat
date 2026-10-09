@@ -7,13 +7,15 @@ import Foundation
 /// - `-mockOffline` — сеть всегда «нет»;
 /// - `-mockError 429|401|403|500|offline` — LLM отвечает этой ошибкой;
 /// - `-mockSlowStream` — LLM-фейк с медленным стримингом;
-/// - `-mockDictation` — диктовка без микрофона: фейк «надиктовывает» фразу по словам.
+/// - `-mockDictation` — диктовка без микрофона: фейковая запись и распознавание заданной фразы;
+/// - `-mockOnDeviceModel` — фейковая «модель на устройстве» для «Answer offline» (и на iOS 18).
 struct LaunchOptions: Hashable, Sendable {
     var useMockData = false
     var forceOffline = false
     var mockError: ErrorKind?
     var slowStream = false
     var mockDictation = false
+    var mockOnDeviceModel = false
 
     static let none = LaunchOptions()
 
@@ -27,6 +29,7 @@ struct LaunchOptions: Hashable, Sendable {
         forceOffline = arguments.contains("-mockOffline")
         slowStream = arguments.contains("-mockSlowStream")
         mockDictation = arguments.contains("-mockDictation")
+        mockOnDeviceModel = arguments.contains("-mockOnDeviceModel")
         if let index = arguments.firstIndex(of: "-mockError") {
             let value = arguments.index(after: index) < arguments.endIndex ? arguments[index + 1] : ""
             mockError = Self.errorKind(for: value)

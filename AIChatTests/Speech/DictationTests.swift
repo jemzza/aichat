@@ -7,88 +7,183 @@ private struct Boom: Error {}
 @MainActor
 struct DictationTests {
     private func makeChat(
-        transcriber: FakeSpeechTranscriber = FakeSpeechTranscriber(),
-        speech: FakeSpeechSynthesizer? = nil,
-        session: (any ChatSession)? = nil
+        recorder: FakeVoiceRecorder = FakeVoiceRecorder(ticks: false),
+        transcriber: FakeSpeechTranscriber = FakeSpeechTranscriber(result: .success("Hello world.")),
+        speech: FakeSpeechSynthesizer? = nil
     ) -> ChatViewModel {
         let repository = InMemoryChatRepository()
         return ChatViewModel(chatId: nil, repository: repository,
-                             session: session ?? PreviewChatSession(repository: repository,
-                                                                    connectivity: FakeConnectivityMonitor(isOnline: true)),
-                             speech: speech, transcriber: transcriber)
+                             session: PreviewChatSession(repository: repository,
+                                                         connectivity: FakeConnectivityMonitor(isOnline: true)),
+                             speech: speech, recorder: recorder, transcriber: transcriber)
+    }
+
+    /// Зажать микрофон и «наговорить» `duration`.
+    private func record(_ chat: ChatViewModel, recorder: FakeVoiceRecorder, duration: Duration = .seconds(2)) async throws {
+        chat.beginDictation()
+        let dictation = try #require(chat.dictation)
+        try await waitUntil { dictation.state == .recording }
+        recorder.send(.progress(duration: duration, level: 0.5))
+        try await waitUntil { dictation.duration == duration }
     }
 
     @Test func joinAddsSingleSpace() {
-        #expect(Transcript.join("Hello", "world") == "Hello world")
-        #expect(Transcript.join("Hello ", "world") == "Hello world")
-        #expect(Transcript.join("", "world") == "world")
-        #expect(Transcript(finalized: "One.", volatile: "two").text == "One. two")
+        #expect(DictationText.join("Hello", "world") == "Hello world")
+        #expect(DictationText.join("Hello ", "world") == "Hello world")
+        #expect(DictationText.join("", "world") == "world")
     }
 
-    @Test func dictationAppendsToTypedTextAndReplacesVolatile() async throws {
-        let transcriber = FakeSpeechTranscriber()
-        let chat = makeChat(transcriber: transcriber)
+    @Test func releaseTranscribesAppendsAndDiscardsFile() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let transcriber = FakeSpeechTranscriber(result: .success("Buy milk."))
+        let chat = makeChat(recorder: recorder, transcriber: transcriber)
         chat.inputText = "Note:"
-        await chat.toggleDictation()
-        let dictation = try #require(chat.dictation)
-        try await waitUntil { dictation.state == .recording }
+        try await record(chat, recorder: recorder)
 
-        transcriber.send(.transcript(Transcript(volatile: "buy mlk")))
-        try await waitUntil { chat.inputText == "Note: buy mlk" }
-        transcriber.send(.transcript(Transcript(finalized: "Buy milk.")))
-        try await waitUntil { chat.inputText == "Note: Buy milk." }
+        await chat.endDictation()
 
-        await chat.toggleDictation()
-        #expect(transcriber.finishCount == 1)
-        transcriber.complete(with: "Buy milk.")
-        try await waitUntil { dictation.state == .idle }
         #expect(chat.inputText == "Note: Buy milk.")
+        #expect(chat.dictation?.state == .idle)
+        #expect(transcriber.transcribedFiles.count == 1)
+        #expect(recorder.discarded == transcriber.transcribedFiles)
     }
 
-    @Test func userEditStopsDictationAndKeepsEdit() async throws {
-        let transcriber = FakeSpeechTranscriber()
-        let chat = makeChat(transcriber: transcriber)
-        await chat.toggleDictation()
-        let dictation = try #require(chat.dictation)
-        transcriber.send(.transcript(Transcript(volatile: "hello")))
-        try await waitUntil { chat.inputText == "hello" }
+    @Test func textTypedDuringTranscriptionIsKept() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let transcriber = FakeSpeechTranscriber(result: .success("world"), delay: .milliseconds(100))
+        let chat = makeChat(recorder: recorder, transcriber: transcriber)
+        try await record(chat, recorder: recorder)
 
-        chat.inputText = "hello there"
-        #expect(transcriber.finishCount == 1)
-        transcriber.send(.transcript(Transcript(volatile: "hello world")))
-        transcriber.complete(with: "hello world")
-        try await waitUntil { dictation.state == .idle }
-        #expect(chat.inputText == "hello there")
+        let release = Task { await chat.endDictation() }
+        try await waitUntil { chat.dictation?.state == .transcribing }
+        chat.inputText = "Hello"
+        await release.value
+
+        #expect(chat.inputText == "Hello world")
+    }
+
+    @Test func shortPressShowsHoldHintAndSkipsTranscription() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let transcriber = FakeSpeechTranscriber(result: .success("x"))
+        let chat = makeChat(recorder: recorder, transcriber: transcriber)
+        try await record(chat, recorder: recorder, duration: .milliseconds(200))
+
+        await chat.endDictation()
+
+        #expect(chat.dictation?.state == .holdHint)
+        #expect(recorder.cancelCount == 1)
+        #expect(transcriber.transcribedFiles.isEmpty)
+        #expect(chat.inputText.isEmpty)
+    }
+
+    @Test func releaseBeforeRecordingStartsShowsHoldHint() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let chat = makeChat(recorder: recorder)
+        chat.beginDictation()
+        // Отпускаем сразу, пока идут запросы разрешений.
+        await chat.endDictation()
+
+        #expect(chat.dictation?.state == .holdHint)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(recorder.startCount == 0)
+    }
+
+    @Test func autoStopTranscribesWhatWasRecorded() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let chat = makeChat(recorder: recorder)
+        try await record(chat, recorder: recorder)
+
+        recorder.send(.stoppedAutomatically)
+
+        try await waitUntil { chat.inputText == "Hello world." }
+        #expect(chat.dictation?.state == .idle)
+    }
+
+    @Test func emptyResultSaysNothingHeard() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let chat = makeChat(recorder: recorder, transcriber: FakeSpeechTranscriber(result: .success("  ")))
+        try await record(chat, recorder: recorder)
+
+        await chat.endDictation()
+
+        #expect(chat.dictation?.state == .nothingHeard)
+        #expect(chat.inputText.isEmpty)
+        #expect(recorder.discarded.count == 1)
+    }
+
+    @Test func transcriptionErrorsMapToMessagesAndDiscardFile() async throws {
+        for (error, expected) in [
+            (DictationUnavailability.dictationDisabled as Error, DictationViewModel.State.unavailable(.dictationDisabled)),
+            (Boom(), .failed),
+        ] {
+            let recorder = FakeVoiceRecorder(ticks: false)
+            let chat = makeChat(recorder: recorder, transcriber: FakeSpeechTranscriber(result: .failure(error)))
+            try await record(chat, recorder: recorder)
+
+            await chat.endDictation()
+
+            #expect(chat.dictation?.state == expected)
+            #expect(recorder.discarded.count == 1)
+        }
     }
 
     @Test func deniedMicrophoneShowsSettingsMessage() async throws {
-        let chat = makeChat(transcriber: FakeSpeechTranscriber(script: .fail(DictationUnavailability.microphoneDenied)))
-        await chat.toggleDictation()
+        let recorder = FakeVoiceRecorder(ticks: false)
+        recorder.isPermissionGranted = false
+        let chat = makeChat(recorder: recorder)
+        chat.beginDictation()
         let dictation = try #require(chat.dictation)
+
         try await waitUntil { dictation.state == .unavailable(.microphoneDenied) }
         #expect(dictation.canOpenSettings)
-        #expect(DictationMessagePresentation(state: dictation.state) != nil)
-
+        #expect(recorder.startCount == 0)
         dictation.dismissMessage()
         #expect(dictation.state == .idle)
     }
 
-    @Test func otherErrorIsFailureWithoutSettings() async throws {
-        let chat = makeChat(transcriber: FakeSpeechTranscriber(script: .fail(Boom())))
-        await chat.toggleDictation()
-        let dictation = try #require(chat.dictation)
-        try await waitUntil { dictation.state == .failed }
-        #expect(!dictation.canOpenSettings)
+    @Test func deniedRecognitionIsAskedBeforeRecording() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let transcriber = FakeSpeechTranscriber()
+        transcriber.prepareError = DictationUnavailability.recognitionDenied
+        let chat = makeChat(recorder: recorder, transcriber: transcriber)
+        chat.beginDictation()
+
+        try await waitUntil { chat.dictation?.state == .unavailable(.recognitionDenied) }
+        #expect(recorder.startCount == 0)
     }
 
-    @Test func downloadProgressIsShown() async throws {
-        let transcriber = FakeSpeechTranscriber()
-        let chat = makeChat(transcriber: transcriber)
+    @Test func downloadProgressThenTranscribing() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let transcriber = FakeSpeechTranscriber(result: .success("Hi"), delay: .milliseconds(200))
+        transcriber.downloadSteps = [0.4]
+        let chat = makeChat(recorder: recorder, transcriber: transcriber)
+        try await record(chat, recorder: recorder)
+
+        let release = Task { await chat.endDictation() }
+        try await waitUntil { chat.dictation?.state == .downloading(0.4) }
+        await release.value
+        #expect(chat.inputText == "Hi")
+    }
+
+    @Test func secondPressWhileRecordingDoesNotRestart() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let chat = makeChat(recorder: recorder)
+        try await record(chat, recorder: recorder)
+        chat.beginDictation()
+        #expect(recorder.startCount == 1)
+    }
+
+    @Test func voiceOverToggleStartsAndStops() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let chat = makeChat(recorder: recorder)
         await chat.toggleDictation()
-        let dictation = try #require(chat.dictation)
-        transcriber.send(.downloading(fraction: 0.4))
-        try await waitUntil { dictation.state == .downloading(0.4) }
-        #expect(dictation.isActive)
+        try await waitUntil { chat.dictation?.state == .recording }
+        recorder.send(.progress(duration: .seconds(1), level: 0.5))
+        try await waitUntil { chat.dictation?.duration == .seconds(1) }
+
+        await chat.toggleDictation()
+
+        #expect(chat.inputText == "Hello world.")
     }
 
     @Test func dictationStopsReadingAndBlocksReadAloud() async throws {
@@ -97,18 +192,19 @@ struct DictationTests {
         let reply = Message(chatId: UUID(), role: .assistant, text: "Hi", status: .done, createdAt: .now)
         speech.speak("Hi", messageId: reply.id)
 
-        await chat.toggleDictation()
+        chat.beginDictation()
+
         #expect(speech.stopCount == 1)
         #expect(!chat.canReadAloud(reply))
     }
 
-    @Test func sendDuringDictationWaitsForFinalTextAndSendsOnce() async throws {
-        let transcriber = FakeSpeechTranscriber(script: .phrase("Hello there", wordDelay: .milliseconds(1)))
+    @Test func sendDuringRecordingWaitsForTranscriptionAndSendsOnce() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
         let repository = InMemoryChatRepository()
         let session = PreviewChatSession(repository: repository, connectivity: FakeConnectivityMonitor(isOnline: true))
-        let chat = ChatViewModel(chatId: nil, repository: repository, session: session, transcriber: transcriber)
-        await chat.toggleDictation()
-        try await waitUntil { chat.inputText == "Hello there" }
+        let chat = ChatViewModel(chatId: nil, repository: repository, session: session,
+                                 recorder: recorder, transcriber: FakeSpeechTranscriber(result: .success("Hello there")))
+        try await record(chat, recorder: recorder)
 
         await chat.send()
 
@@ -119,66 +215,28 @@ struct DictationTests {
         #expect(chats?.count == 1)
     }
 
-    @Test func finishTimesOutIfTranscriberNeverEnds() async throws {
-        let transcriber = FakeSpeechTranscriber()
-        let dictation = DictationViewModel(transcriber: transcriber, finishTimeout: .milliseconds(50))
-        dictation.start(prefix: "") { _ in }
-        try await waitUntil { dictation.state == .recording }
+    @Test func cancelDropsRecording() async throws {
+        let recorder = FakeVoiceRecorder(ticks: false)
+        let chat = makeChat(recorder: recorder)
+        try await record(chat, recorder: recorder)
 
-        await dictation.finish()
+        chat.stopDictation()
 
-        #expect(dictation.state == .idle)
+        #expect(recorder.cancelCount == 1)
+        #expect(chat.dictation?.state == .idle)
+        #expect(chat.inputText.isEmpty)
     }
 
-    // MARK: Зажми и говори
-
-    @Test func pressAndReleaseDictatesAndKeepsFinalText() async throws {
-        let transcriber = FakeSpeechTranscriber()
-        let chat = makeChat(transcriber: transcriber)
-        chat.beginDictation()
-        let dictation = try #require(chat.dictation)
-        try await waitUntil { dictation.state == .recording }
-        transcriber.send(.transcript(Transcript(volatile: "hello wor")))
-        try await waitUntil { chat.inputText == "hello wor" }
-
-        let release = Task { await chat.endDictation() }
-        try await waitUntil { transcriber.finishCount == 1 }
-        transcriber.complete(with: "Hello world.")
-        await release.value
-
-        #expect(dictation.state == .idle)
-        #expect(chat.inputText == "Hello world.")
-    }
-
-    @Test func secondPressWhileRecordingDoesNotRestart() async throws {
-        let transcriber = FakeSpeechTranscriber()
-        let chat = makeChat(transcriber: transcriber)
-        chat.beginDictation()
-        chat.beginDictation()
-        #expect(transcriber.dictateCount == 1)
-    }
-
-    @Test func releaseBeforeRecordingShowsHoldHint() async throws {
-        let transcriber = FakeSpeechTranscriber()
-        let dictation = DictationViewModel(transcriber: transcriber)
-        dictation.start(prefix: "") { _ in }
-        // Запись ещё не началась (фейк сразу шлёт `.recording`, поэтому отпускаем синхронно).
-        #expect(dictation.state == .preparing)
-
-        await dictation.release()
-
-        #expect(dictation.state == .holdHint)
-        #expect(DictationMessagePresentation(state: dictation.state) != nil)
-        dictation.dismissMessage()
-        #expect(dictation.state == .idle)
-    }
-
-    @Test func everyUnavailabilityHasMessage() {
+    @Test func everyFailureHasMessage() {
         let reasons: [DictationUnavailability] = [
-            .microphoneDenied, .recognitionDenied, .languageNotSupported, .needsDownload, .serviceUnavailable, .dictationDisabled,
+            .microphoneDenied, .recognitionDenied, .languageNotSupported, .needsDownload, .serviceUnavailable,
+            .dictationDisabled,
         ]
         for reason in reasons {
             #expect(DictationMessagePresentation(state: .unavailable(reason)) != nil)
+        }
+        for state in [DictationViewModel.State.failed, .holdHint, .nothingHeard] {
+            #expect(DictationMessagePresentation(state: state) != nil)
         }
     }
 }

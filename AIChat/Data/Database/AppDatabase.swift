@@ -87,6 +87,21 @@ struct AppDatabase: Sendable {
             }
             try db.create(index: "chat_on_folderId", on: ChatRecord.databaseTableName, columns: ["folderId"])
         }
+
+        // «v3» в main появилась раньше «v2» (папки делались в отдельной ветке). GRDB применяет
+        // все неприменённые миграции по порядку регистрации, даже если более поздняя уже
+        // применена, поэтому база с v1+v3 получит v2 при обновлении. Таблицы независимы.
+        migrator.registerMigration("v3") { db in
+            // Фото сообщений. Отдельная таблица: запись стрима (`updateMessage`) не трогает
+            // строки с BLOB, а история читает фото только нужных сообщений.
+            // Удаление чата → сообщения → фото каскадом.
+            try db.create(table: AttachmentRecord.databaseTableName) { t in
+                t.primaryKey("id", .blob)
+                t.belongsTo(MessageRecord.databaseTableName, onDelete: .cascade).notNull()
+                t.column("position", .integer).notNull()
+                t.column("data", .blob).notNull()
+            }
+        }
         return migrator
     }
 }

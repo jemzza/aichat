@@ -28,7 +28,7 @@ struct AppDatabaseTests {
         let queue = try DatabaseQueue()
         _ = try AppDatabase(queue)
         _ = try AppDatabase(queue)
-        #expect(try queue.read { try AppDatabase.migrator.appliedIdentifiers($0) } == ["v1", "v2"])
+        #expect(try queue.read { try AppDatabase.migrator.appliedIdentifiers($0) } == ["v1", "v2", "v3"])
     }
 
     @Test func recordsRoundTripDomainModels() throws {
@@ -88,6 +88,43 @@ struct AppDatabaseTests {
         #expect(deleted)
         let remaining = try database.writer.read { try MessageRecord.fetchAll($0).map(\.chatId) }
         #expect(remaining == [other.id])
+    }
+
+    /// База v1 с данными: после миграции v3 всё на месте, у сообщений нет фото.
+    @Test func migrationFromV1KeepsDataAndAddsAttachments() async throws {
+        let queue = try DatabaseQueue()
+        // Только первая миграция — как у установленной раньше версии.
+        try AppDatabase.migrator.migrate(queue, upTo: "v1")
+        let chat = makeChat()
+        let message = Message(chatId: chat.id, role: .user, text: "old", status: .sent, createdAt: t0)
+        try await queue.write { db in
+            // Чат — сырым SQL: `ChatRecord` уже знает `folderId` из v2, а база ещё на v1.
+            try db.execute(
+                sql: "INSERT INTO chat (id, title, createdAt, updatedAt) VALUES (?, ?, ?, ?)",
+                arguments: [chat.id, chat.title, chat.createdAt.databaseTimestamp, chat.updatedAt.databaseTimestamp]
+            )
+            try MessageRecord(message).insert(db)
+        }
+
+        let database = try AppDatabase(queue)
+        let repository = GRDBChatRepository(database: database)
+
+        #expect(try await queue.read { try $0.tableExists("attachment") })
+        #expect(try await firstValue(of: repository.observeMessages(chatId: chat.id)) == [message])
+    }
+
+    @Test func deletingChatCascadesToAttachments() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = GRDBChatRepository(database: database)
+        let chat = makeChat()
+        let photo = Message(chatId: chat.id, role: .user, text: "", status: .sent,
+                            images: [ImageAttachment(jpegData: Data([1]))], createdAt: t0)
+        try await repository.insertChat(chat, firstMessage: photo)
+        #expect(try await database.writer.read { try AttachmentRecord.fetchCount($0) } == 1)
+
+        try await repository.deleteChat(id: chat.id)
+
+        #expect(try await database.writer.read { try AttachmentRecord.fetchCount($0) } == 0)
     }
 
     @Test func messageWithoutChatViolatesForeignKey() throws {
@@ -167,7 +204,7 @@ struct AppDatabaseTests {
         let database = try AppDatabase(queue)
 
         try await queue.read { db in
-            #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2"])
+            #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2", "v3"])
             #expect(try ChatRecord.byLastActivity().fetchAll(db).map(\.chat) == [chatB, chatA])
             #expect(try MessageRecord.chronological().fetchAll(db).map { try $0.message() } == stored)
             #expect(try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM chat WHERE folderId IS NOT NULL") == 0)
@@ -186,6 +223,39 @@ struct AppDatabaseTests {
         let snapshot = try await firstValue(of: repository.observeSidebar()) { $0.recents.count == 1 }
         #expect(snapshot.folders.first?.chats.map(\.id) == [chatA.id])
         #expect(snapshot.recents.map(\.id) == [chatB.id])
+    }
+
+    /// База из main до слияния папок: применены v1 и v3 (фото), v2 (папки) — нет.
+    /// При обновлении GRDB должен применить пропущенную v2, не трогая данные.
+    @Test func databaseWithV1AndV3GetsFoldersMigration() async throws {
+        let queue = try DatabaseQueue()
+        try AppDatabase.migrator.migrate(queue, upTo: "v1")
+        let chat = makeChat()
+        try await queue.write { db in
+            // То, что сделала бы v3 из main, — вручную: мигратор без v2 из тестов недоступен.
+            try db.execute(sql: """
+                CREATE TABLE attachment (
+                  id BLOB PRIMARY KEY NOT NULL,
+                  messageId BLOB NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+                  position INTEGER NOT NULL,
+                  data BLOB NOT NULL)
+                """)
+            try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES ('v3')")
+            try db.execute(
+                sql: "INSERT INTO chat (id, title, createdAt, updatedAt) VALUES (?, ?, ?, ?)",
+                arguments: [chat.id, chat.title, chat.createdAt.databaseTimestamp, chat.updatedAt.databaseTimestamp]
+            )
+        }
+        #expect(try await queue.read { try AppDatabase.migrator.appliedIdentifiers($0) } == ["v1", "v3"])
+
+        _ = try AppDatabase(queue)
+
+        try await queue.read { db throws in
+            #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2", "v3"])
+            #expect(try db.tableExists("folder"))
+            #expect(try db.tableExists("attachment"))
+            #expect(try ChatRecord.fetchAll(db).map(\.chat) == [chat])
+        }
     }
 
     @Test func deletingFolderSetsChatFolderToNull() throws {
